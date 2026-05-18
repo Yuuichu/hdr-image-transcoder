@@ -189,9 +189,8 @@ if the JXL color metadata is signaled as SDR.
 ## HEIF HDR Notes
 
 HEIF output uses `pillow-heif` and writes 10-bit HEVC with nclx metadata:
-BT.709 primaries, PQ transfer, RGB matrix, full range (`1/16/0`). This is meant
-for Apple ecosystem testing where HEIF/HEIC HDR support is often better exposed
-than JPEG XL.
+BT.709 primaries, PQ transfer, BT.709 matrix, full range (`1/16/1`). The encoder
+uses 4:2:0 chroma for better compatibility with OS HEIF viewers.
 
 ## Project Structure
 

@@ -84,11 +84,11 @@ def _encode_heif_hdr(pixels_rgb, output_path, quality=95):
     heif_file.save(
         output_path,
         quality=quality,
-        chroma="444",
+        chroma="420",
         save_nclx_profile=True,
         color_primaries=1,
         transfer_characteristics=16,
-        matrix_coefficients=0,
+        matrix_coefficients=1,
         full_range_flag=1,
     )
     return output_path

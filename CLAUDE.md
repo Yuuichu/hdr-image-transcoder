@@ -87,6 +87,9 @@ jxr2avif.py       -> backward-compatible wrapper for hdr2avif.main()
 - `--headroom` controls SDR base tonemap headroom in stops (default 2.0).
 - Default `.avif` output is gainmap AVIF for backward compatibility.
 - Use `--format avif` when the intended output is standard 10-bit PQ HDR AVIF.
+- HEIF HDR output uses PQ with BT.709 matrix (`1/16/1`) and 4:2:0 chroma for
+  OS viewer compatibility. Do not switch it back to RGB identity matrix; WIC
+  and some viewers display that path as a red-tinted image.
 - JPEG XL output writes a container with full CICP metadata
   (primaries=1 BT.709/sRGB, transfer=8 Linear, bitspersample=32).
   As of 2026-05, Safari is the only browser with JXL enabled by default;
