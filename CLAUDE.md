@@ -18,6 +18,7 @@ Supported input formats:
 - Ultra HDR JPEG: `.jpg`, `.jpeg`
 - Radiance HDR: `.hdr`
 - PNG: `.png`
+- TIFF: `.tif`, `.tiff`
 
 Supported output formats:
 
@@ -25,6 +26,7 @@ Supported output formats:
 - JPEG XL HDR: `.jxl`
 - Ultra HDR JPEG: `.jpg` / `.jpeg`
 - Standard HDR AVIF: `.avif` with `--format avif`
+- HEIF HDR: `.heic` / `.heif`
 
 ## Common Commands
 
@@ -35,9 +37,13 @@ python hdr2avif.py "C:\Users\77126\Videos\Forza Horizon 6\screenshot.jxr"
 # Convert one file and infer output format from extension.
 python hdr2avif.py input.jxr output.jxl
 python hdr2avif.py input.jxr output.jpg
+python hdr2avif.py input.jxr output.heic
 
 # Write standard 10-bit PQ HDR AVIF instead of gainmap AVIF.
 python hdr2avif.py input.jxr output.avif --format avif
+
+# Write standard 10-bit PQ HDR HEIF.
+python hdr2avif.py input.jxr output.heic --format heif
 
 # Batch convert a directory.
 python hdr2avif.py "C:\Users\77126\Videos\Forza Horizon 6" --output-dir .\output
@@ -73,7 +79,7 @@ hdr2avif.py
   -> avif_encoder.encode_gainmap_avif()
      -> tools/libavif/avifgainmaputil.exe
   -> format_encoder.encode_output()
-     -> JPEG XL, Ultra HDR JPEG, or standard HDR AVIF
+     -> JPEG XL, Ultra HDR JPEG, standard HDR AVIF, or HEIF HDR
 
 jxr2avif.py
   -> backward-compatible wrapper for hdr2avif.main()
@@ -84,5 +90,7 @@ jxr2avif.py
 - `--max-headroom 0` means no maximum cap for `avifgainmaputil`.
 - Default `.avif` output is gainmap AVIF for backward compatibility.
 - Use `--format avif` when the intended output is standard 10-bit PQ HDR AVIF.
+- JPEG XL output writes a container, but current `imagecodecs` bindings do not
+  expose reliable HDR color metadata control for every viewer.
 - The CLI avoids overwriting an input file when the default output extension is
   the same as the input extension.

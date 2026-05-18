@@ -5,7 +5,7 @@ Convert HDR images between modern HDR still-image formats.
 The default workflow is optimized for HDR screenshots such as JPEG XR captures:
 decode the source to linear float32 data, generate an SDR-compatible base image,
 and encode a gain map AVIF. The tool can also write JPEG XL HDR, Ultra HDR JPEG,
-and standard 10-bit PQ AVIF.
+standard 10-bit PQ AVIF, and HEIF HDR.
 
 ## Features
 
@@ -13,6 +13,7 @@ and standard 10-bit PQ AVIF.
 - Export JPEG XL HDR (`.jxl`)
 - Export Ultra HDR JPEG (`.jpg` / `.jpeg`)
 - Export standard 10-bit PQ HDR AVIF (`.avif` with `--format avif`)
+- Export HEIF HDR (`.heic` / `.heif`)
 - Batch convert a whole directory
 - Decode through `imagecodecs`, with bundled Windows `libavif` tools for gain map AVIF
 - Backward-compatible `jxr2avif.py` entry point
@@ -41,6 +42,7 @@ and standard 10-bit PQ AVIF.
 | JPEG XL HDR | `.jxl` | output path ending in `.jxl` or `--format jxl` |
 | Ultra HDR JPEG | `.jpg`, `.jpeg` | output path ending in `.jpg` / `.jpeg` or `--format ultrahdr` |
 | Standard PQ HDR AVIF | `.avif` | `--format avif` |
+| HEIF HDR | `.heic`, `.heif` | output path ending in `.heic` / `.heif` or `--format heif` |
 
 ## Installation
 
@@ -94,12 +96,20 @@ Choose the output format by extension:
 ```powershell
 python hdr2avif.py input.jxr output.jxl
 python hdr2avif.py input.jxr output.jpg
+python hdr2avif.py input.jxr output.heic
 ```
 
 Write standard 10-bit PQ HDR AVIF instead of gain map AVIF:
 
 ```powershell
 python hdr2avif.py input.jxr output.avif --format avif
+```
+
+Write 10-bit PQ HDR HEIF:
+
+```powershell
+python hdr2avif.py input.jxr output.heic
+python hdr2avif.py input.jxr output.heif --format heif
 ```
 
 Batch convert a directory:
@@ -168,6 +178,21 @@ python hdr2avif.py input.jxr output.avif --format avif
 This path writes BT.709 primaries, PQ transfer, and RGB matrix CICP metadata
 (`1/16/0`).
 
+## JPEG XL Notes
+
+JPEG XL output currently uses `imagecodecs` / `libjxl`. The encoder writes a
+standard JPEG XL container, but current `imagecodecs` bindings do not expose
+enough control for reliable HDR color metadata on every viewer. The float HDR
+pixel data can be preserved, while Apple ImageIO may still treat the file as SDR
+if the JXL color metadata is signaled as SDR.
+
+## HEIF HDR Notes
+
+HEIF output uses `pillow-heif` and writes 10-bit HEVC with nclx metadata:
+BT.709 primaries, PQ transfer, RGB matrix, full range (`1/16/0`). This is meant
+for Apple ecosystem testing where HEIF/HEIC HDR support is often better exposed
+than JPEG XL.
+
 ## Project Structure
 
 ```text
@@ -177,7 +202,7 @@ electron/            Local Electron GUI
 format_decoder.py    Input format detection and decoding
 hdr_processor.py     SDR base, PQ alternate, and gain map helpers
 avif_encoder.py      Gain map AVIF encoder using avifgainmaputil
-format_encoder.py    JPEG XL, Ultra HDR JPEG, and standard AVIF encoders
+format_encoder.py    JPEG XL, Ultra HDR JPEG, standard AVIF, and HEIF encoders
 tools/libavif/       Bundled Windows libavif tools
 ```
 

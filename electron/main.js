@@ -55,6 +55,8 @@ function getOutputExtension(format) {
       return ".jxl";
     case "ultrahdr":
       return ".jpg";
+    case "heif":
+      return ".heic";
     case "avif":
     case "gainmap":
     default:
@@ -134,7 +136,7 @@ function validateOptions(options) {
   if (!["file", "directory"].includes(options.inputMode)) {
     throw new Error("Input mode must be file or directory.");
   }
-  if (!["gainmap", "jxl", "ultrahdr", "avif"].includes(options.format)) {
+  if (!["gainmap", "jxl", "ultrahdr", "avif", "heif"].includes(options.format)) {
     throw new Error("Unknown output format.");
   }
   if (!Number.isInteger(options.quality) || options.quality < 0 || options.quality > 100) {

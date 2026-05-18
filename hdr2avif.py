@@ -7,6 +7,7 @@ HDR images to:
   - JPEG XL HDR: .jxl
   - Ultra HDR JPEG: .jpg/.jpeg
   - Standard AVIF HDR: .avif with -f avif
+  - HEIF HDR: .heic/.heif
 
 Usage:
     python hdr2avif.py <input> [output]
@@ -38,8 +39,13 @@ INPUT_EXTENSIONS = {
     ".tiff",
 }
 
-TIER1_FORMATS = {"jxl", "ultrahdr", "avif"}
-FORMAT_EXTENSIONS = {"jxl": ".jxl", "ultrahdr": ".jpg", "avif": ".avif"}
+TIER1_FORMATS = {"jxl", "ultrahdr", "avif", "heif"}
+FORMAT_EXTENSIONS = {
+    "jxl": ".jxl",
+    "ultrahdr": ".jpg",
+    "avif": ".avif",
+    "heif": ".heic",
+}
 
 
 def _same_path(left, right):
@@ -138,7 +144,7 @@ def main():
     parser = argparse.ArgumentParser(
         description=(
             "Convert HDR images to Gainmap AVIF, JPEG XL, "
-            "Ultra HDR JPEG, or AVIF HDR"
+            "Ultra HDR JPEG, AVIF HDR, or HEIF HDR"
         )
     )
     parser.add_argument("input", nargs="?", help="HDR image file or directory")
@@ -150,8 +156,8 @@ def main():
                         help="Encoder speed 0-10 (default: 6)")
     parser.add_argument("--max-headroom", type=float, default=0,
                         help="Max gain headroom log2, 0=auto (gainmap AVIF only)")
-    parser.add_argument("--format", "-f", choices=["jxl", "avif", "ultrahdr"],
-                        help="Output format: jxl, avif (standard HDR), ultrahdr")
+    parser.add_argument("--format", "-f", choices=["jxl", "avif", "ultrahdr", "heif"],
+                        help="Output format: jxl, avif (standard HDR), ultrahdr, heif")
     parser.add_argument("--lossless", action="store_true",
                         help="Lossless encoding (JXL only)")
     parser.add_argument("--list-formats", action="store_true",
@@ -183,6 +189,9 @@ def main():
             elif key == "jxl":
                 strategy = "native float32"
                 best = "compression/lossless"
+            elif key == "heif":
+                strategy = "10-bit PQ HEVC"
+                best = "Apple ecosystem"
             else:
                 strategy = "10-bit PQ"
                 best = "broadest browser"
