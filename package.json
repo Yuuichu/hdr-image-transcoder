@@ -5,7 +5,7 @@
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
-    "prepack": "node -e \"const fs=require('fs'),p=require('path');['hdr2avif.py','jxr2avif.py','requirements.txt'].forEach(f=>fs.copyFileSync(f,p.join('python',f)));['src'].forEach(d=>{const t=p.join('python',d);fs.mkdirSync(t,{recursive:true});fs.readdirSync(d).forEach(f=>fs.copyFileSync(p.join(d,f),p.join(t,f)))});['tools'].forEach(d=>{const t=p.join('python',d);fs.mkdirSync(t,{recursive:true});fs.readdirSync(d).forEach(f=>{const s=p.join(d,f);if(fs.statSync(s).isDirectory()){const t2=p.join(t,f);fs.mkdirSync(t2,{recursive:true});fs.readdirSync(s).forEach(f2=>fs.copyFileSync(p.join(s,f2),p.join(t2,f2)))}else fs.copyFileSync(s,p.join(t,f))})})\"",
+    "prepack": "node scripts/prepare-package.js",
     "pack": "npm run prepack && electron-builder --dir",
     "dist": "npm run prepack && electron-builder"
   },
