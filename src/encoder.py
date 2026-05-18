@@ -64,7 +64,7 @@ def _encode_avif_hdr(pixels_rgb, output_path, quality=95, speed=6):
         speed=speed,
         primaries=1,
         transfer=16,
-        matrix=0,
+        matrix=1,
     )
     Path(output_path).write_bytes(data)
     return output_path

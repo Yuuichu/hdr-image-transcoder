@@ -50,8 +50,8 @@ def encode_gainmap_avif(sdr_8bit, hdr_16bit, output_path, quality=95, speed=6, m
             "--qcolor", str(quality),
             "--qgain-map", str(quality),
             "--speed", str(speed),
-            "--cicp-base", "1/13/0",
-            "--cicp-alternate", "1/16/0",
+            "--cicp-base", "1/13/1",
+            "--cicp-alternate", "1/16/1",
             "--max-headroom", str(max_headroom),
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)

@@ -175,8 +175,8 @@ AVIF:
 python hdr2avif.py input.jxr output.avif --format avif
 ```
 
-This path writes BT.709 primaries, PQ transfer, and RGB matrix CICP metadata
-(`1/16/0`).
+This path writes BT.709 primaries, PQ transfer, and BT.709 matrix CICP metadata
+(`1/16/1`) for OS viewer compatibility.
 
 ## JPEG XL Notes
 

@@ -202,7 +202,7 @@ def _decode_gainmap_avif(raw):
                 "--headroom",
                 f"{alternate_headroom:.6f}",
                 "--cicp-output",
-                "1/16/0",
+                "1/16/1",
                 "-d",
                 "10",
                 "-y",
