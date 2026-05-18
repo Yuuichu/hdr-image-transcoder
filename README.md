@@ -49,10 +49,38 @@ Python 3.12 is used during development. Install the Python dependencies:
 pip install -r requirements.txt
 ```
 
+For the optional Electron GUI, install the Node dependencies:
+
+```powershell
+npm install
+```
+
+If the Electron binary download is slow or stalls, use a mirror for the install
+step:
+
+```powershell
+$env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
+npm install
+```
+
 The repository includes Windows `libavif` binaries under `tools/libavif/`.
 `avifgainmaputil.exe` is used for gain map AVIF output.
 
 ## Usage
+
+### Local GUI
+
+Start the Electron desktop GUI:
+
+```powershell
+npm start
+```
+
+The GUI runs the same local Python conversion pipeline as the CLI. It supports
+single-file conversion, directory conversion, output format selection, quality,
+speed, gain map headroom, JXL lossless mode, live logs, and cancellation.
+
+### CLI
 
 Convert a single file to gain map AVIF:
 
@@ -144,6 +172,7 @@ This path writes BT.709 primaries, PQ transfer, and RGB matrix CICP metadata
 ```text
 hdr2avif.py          Main CLI
 jxr2avif.py          Backward-compatible wrapper
+electron/            Local Electron GUI
 format_decoder.py    Input format detection and decoding
 hdr_processor.py     SDR base, PQ alternate, and gain map helpers
 avif_encoder.py      Gain map AVIF encoder using avifgainmaputil

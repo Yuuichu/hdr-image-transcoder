@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HDR Image Transcoder</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="toolbar">
+        <div>
+          <h1>HDR Image Transcoder</h1>
+          <p class="subtitle">Convert HDR still images with the local Python pipeline.</p>
+        </div>
+        <div id="statusBadge" class="status-badge idle">Idle</div>
+      </section>
+
+      <section class="layout">
+        <form id="convertForm" class="panel">
+          <div class="field-group">
+            <label>Input</label>
+            <div class="button-row">
+              <button id="pickFileButton" type="button">Choose File</button>
+              <button id="pickDirectoryButton" type="button">Choose Folder</button>
+            </div>
+            <div id="inputPath" class="path-display empty">No input selected</div>
+          </div>
+
+          <div class="field-group">
+            <label>Output Folder</label>
+            <div class="button-row">
+              <button id="pickOutputButton" type="button">Choose Folder</button>
+              <button id="clearOutputButton" type="button" class="secondary">Use Default</button>
+            </div>
+            <div id="outputPath" class="path-display empty">Default output location</div>
+          </div>
+
+          <div class="field-grid">
+            <div class="field-group">
+              <label for="formatSelect">Output Format</label>
+              <select id="formatSelect">
+                <option value="gainmap">Gainmap AVIF</option>
+                <option value="jxl">JPEG XL HDR</option>
+                <option value="ultrahdr">Ultra HDR JPEG</option>
+                <option value="avif">Standard HDR AVIF</option>
+              </select>
+            </div>
+
+            <div class="field-group">
+              <label for="qualityInput">Quality</label>
+              <input id="qualityInput" type="number" min="0" max="100" step="1" value="95">
+            </div>
+
+            <div class="field-group">
+              <label for="speedInput">Speed</label>
+              <input id="speedInput" type="number" min="0" max="10" step="1" value="6">
+            </div>
+
+            <div class="field-group">
+              <label for="headroomInput">Max Headroom</label>
+              <input id="headroomInput" type="number" min="0" step="0.1" value="0">
+            </div>
+          </div>
+
+          <label class="check-row">
+            <input id="losslessInput" type="checkbox">
+            <span>Lossless JPEG XL</span>
+          </label>
+
+          <div class="action-row">
+            <button id="startButton" type="submit" class="primary">Start Conversion</button>
+            <button id="cancelButton" type="button" class="danger" disabled>Cancel</button>
+          </div>
+
+          <div id="summary" class="summary">Ready.</div>
+        </form>
+
+        <section class="log-panel">
+          <div class="log-header">
+            <h2>Log</h2>
+            <button id="clearLogButton" type="button" class="secondary">Clear</button>
+          </div>
+          <pre id="logOutput" class="log-output"></pre>
+        </section>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
