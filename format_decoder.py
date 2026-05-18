@@ -130,23 +130,40 @@ def _decode_exr(raw):
     return _to_float32(imagecodecs.exr_decode(raw))
 
 
+def _is_10bit_pq(pixels):
+    """Heuristic: 10-bit PQ data decoded as uint16 with values in [0, 1023]."""
+    if pixels.dtype != np.uint16:
+        return False
+    if pixels.size == 0:
+        return False
+    return pixels.max() <= 1023
+
+
+def _decode_pq_10bit(pixels):
+    """Convert 10-bit uint16 PQ pixels to float32 scRGB."""
+    from hdr_processor import _pq_to_linear
+
+    pq_norm = pixels.astype(np.float32) / 1023.0
+    linear_nits = _pq_to_linear(pq_norm, max_nits=10000.0)
+    return linear_nits / 100.0
+
+
 def _decode_avif(raw):
     import imagecodecs
 
     pixels = imagecodecs.avif_decode(raw)
-    if pixels.dtype == np.uint16 and pixels.max() <= 1023:
-        from hdr_processor import _pq_to_linear
-
-        pq_norm = pixels.astype(np.float32) / 1023.0
-        linear_nits = _pq_to_linear(pq_norm, max_nits=10000.0)
-        return linear_nits / 100.0
+    if _is_10bit_pq(pixels):
+        return _decode_pq_10bit(pixels)
     return _to_float32(pixels)
 
 
 def _decode_heif(raw):
     import imagecodecs
 
-    return _to_float32(imagecodecs.heif_decode(raw))
+    pixels = imagecodecs.heif_decode(raw)
+    if _is_10bit_pq(pixels):
+        return _decode_pq_10bit(pixels)
+    return _to_float32(pixels)
 
 
 def _decode_rgbe(raw):

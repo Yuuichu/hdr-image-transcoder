@@ -60,7 +60,7 @@ def _converted_name(path):
 
 
 def convert_single(input_path, output_path, quality=95, speed=6, max_headroom=0,
-                   format=None, lossless=False):
+                   format=None, lossless=False, headroom=2.0):
     """Convert a single HDR image to the specified output format."""
     input_path = Path(input_path)
     output_path = Path(output_path)
@@ -86,10 +86,11 @@ def convert_single(input_path, output_path, quality=95, speed=6, max_headroom=0,
             quality=quality,
             speed=speed,
             lossless=lossless,
+            headroom=headroom,
         )
     else:
-        print("  Computing SDR base and HDR alternate...")
-        sdr = prepare_base_sdr(hdr)
+        print(f"  Computing SDR base (headroom={headroom}) and HDR alternate...")
+        sdr = prepare_base_sdr(hdr, headroom=headroom)
         alt = prepare_alternate_hdr(hdr)
         print(
             f"  Encoding Gainmap AVIF "
@@ -136,6 +137,8 @@ def _validate_args(parser, args):
         parser.error("--speed must be between 0 and 10")
     if args.max_headroom < 0:
         parser.error("--max-headroom must be >= 0")
+    if args.headroom <= 0:
+        parser.error("--headroom must be > 0")
 
 
 def main():
@@ -156,6 +159,8 @@ def main():
                         help="Encoder speed 0-10 (default: 6)")
     parser.add_argument("--max-headroom", type=float, default=0,
                         help="Max gain headroom log2, 0=auto (gainmap AVIF only)")
+    parser.add_argument("--headroom", type=float, default=2.0,
+                        help="SDR base headroom in stops, default 2.0 (gainmap/Ultra HDR)")
     parser.add_argument("--format", "-f", choices=["jxl", "avif", "ultrahdr", "heif"],
                         help="Output format: jxl, avif (standard HDR), ultrahdr, heif")
     parser.add_argument("--lossless", action="store_true",
@@ -214,6 +219,7 @@ def main():
             args.max_headroom,
             format=fmt,
             lossless=args.lossless,
+            headroom=args.headroom,
         )
     elif input_path.is_dir():
         output_dir = Path(args.output_dir) if args.output_dir else input_path
@@ -248,6 +254,7 @@ def main():
                     args.max_headroom,
                     format=args.format,
                     lossless=args.lossless,
+                    headroom=args.headroom,
                 )
             except Exception as exc:
                 print(f"  ERROR: {exc}")

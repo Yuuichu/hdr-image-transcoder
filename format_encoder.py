@@ -14,25 +14,27 @@ from pathlib import Path
 def _encode_jxl(pixels_rgb, output_path, quality=95, lossless=False, effort=7):
     import imagecodecs
 
+    has_hdr = pixels_rgb.max() > 1.0
+    kwargs = dict(effort=effort, usecontainer=True)
+    if has_hdr:
+        kwargs["transfer"] = 8   # Linear (HDR)
+        kwargs["bitspersample"] = 32
+
     if lossless:
-        data = imagecodecs.jpegxl_encode(
-            pixels_rgb, lossless=True, effort=effort, usecontainer=True
-        )
+        data = imagecodecs.jpegxl_encode(pixels_rgb, lossless=True, **kwargs)
     else:
         distance = max((100 - quality) / 20.0, 0.0)
-        data = imagecodecs.jpegxl_encode(
-            pixels_rgb, distance=distance, effort=effort, usecontainer=True
-        )
+        data = imagecodecs.jpegxl_encode(pixels_rgb, distance=distance, **kwargs)
 
     Path(output_path).write_bytes(data)
     return output_path
 
 
-def _encode_ultrahdr(pixels_rgb, output_path, quality=95):
+def _encode_ultrahdr(pixels_rgb, output_path, quality=95, headroom=2.0):
     from hdr_processor import prepare_base_sdr
     import imagecodecs
 
-    sdr_8bit = prepare_base_sdr(pixels_rgb)
+    sdr_8bit = prepare_base_sdr(pixels_rgb, headroom=headroom)
     h, w = sdr_8bit.shape[:2]
 
     sdr_rgba = np.dstack([sdr_8bit, np.full((h, w), 255, dtype=np.uint8)])
@@ -113,7 +115,7 @@ _ENCODERS = {
 
 
 def encode_output(pixels, output_path, format=None, quality=95, speed=6,
-                  lossless=False, effort=7):
+                  lossless=False, effort=7, headroom=2.0):
     """Encode float32 scRGB (H, W, >=3) to a Tier-1 HDR output format.
 
     Args:
@@ -124,6 +126,7 @@ def encode_output(pixels, output_path, format=None, quality=95, speed=6,
         speed: 0-10 (AVIF only)
         lossless: JXL lossless mode
         effort: JXL encoding effort 1-10
+        headroom: SDR base headroom in stops (Ultra HDR only)
 
     Returns:
         Path to the output file
@@ -154,4 +157,4 @@ def encode_output(pixels, output_path, format=None, quality=95, speed=6,
     elif format == "avif":
         return encoder(rgb, output_path, quality=quality, speed=speed)
     else:
-        return encoder(rgb, output_path, quality=quality)
+        return encoder(rgb, output_path, quality=quality, headroom=headroom)
