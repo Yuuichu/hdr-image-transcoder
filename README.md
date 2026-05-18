@@ -31,6 +31,7 @@ and standard 10-bit PQ AVIF.
 | Radiance HDR | `.hdr` |
 | Ultra HDR JPEG | `.jpg`, `.jpeg` |
 | PNG | `.png` |
+| TIFF | `.tif`, `.tiff` |
 
 ### Output
 

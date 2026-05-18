@@ -16,6 +16,8 @@ const INPUT_EXTENSIONS = [
   "jpg",
   "jpeg",
   "png",
+  "tif",
+  "tiff",
 ];
 
 let mainWindow = null;

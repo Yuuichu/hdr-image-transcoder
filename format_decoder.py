@@ -22,6 +22,8 @@ EXTENSION_MAP = {
     ".jpg": "ultrahdr",
     ".jpeg": "ultrahdr",
     ".png": "png",
+    ".tif": "tiff",
+    ".tiff": "tiff",
 }
 
 MAGIC_BYTES = {
@@ -31,6 +33,8 @@ MAGIC_BYTES = {
     b"\x23\x3f\x52\x41\x44\x49\x41\x4e\x43\x45": "rgbe",
     b"II\x2a\x00": "tiff",
     b"MM\x00\x2a": "tiff",
+    b"II\x2b\x00": "tiff",
+    b"MM\x00\x2b": "tiff",
     b"\x89PNG": "png",
 }
 
@@ -171,6 +175,12 @@ def _decode_png(raw):
     return _to_float32(imagecodecs.png_decode(raw))
 
 
+def _decode_tiff(raw):
+    import imagecodecs
+
+    return _to_float32(imagecodecs.tiff_decode(raw))
+
+
 def _decode_wic(raw):
     import imagecodecs
 
@@ -186,6 +196,7 @@ _DECODERS = {
     "rgbe": _decode_rgbe,
     "ultrahdr": _decode_ultrahdr,
     "png": _decode_png,
+    "tiff": _decode_tiff,
 }
 
 
@@ -234,6 +245,7 @@ SUPPORTED_FORMATS = {
     "rgbe": ("Radiance HDR", [".hdr"]),
     "ultrahdr": ("Ultra HDR (JPEG)", [".jpg", ".jpeg"]),
     "png": ("PNG", [".png"]),
+    "tiff": ("TIFF", [".tif", ".tiff"]),
 }
 
 

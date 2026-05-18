@@ -34,6 +34,8 @@ INPUT_EXTENSIONS = {
     ".jpg",
     ".jpeg",
     ".png",
+    ".tif",
+    ".tiff",
 }
 
 TIER1_FORMATS = {"jxl", "ultrahdr", "avif"}
