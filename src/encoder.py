@@ -19,6 +19,7 @@ def _encode_jxl(pixels_rgb, output_path, quality=95, lossless=False, effort=7):
     if has_hdr:
         kwargs["transfer"] = 8   # Linear (HDR)
         kwargs["bitspersample"] = 32
+        kwargs["primaries"] = 1  # BT.709/sRGB (scRGB native)
 
     if lossless:
         data = imagecodecs.jpegxl_encode(pixels_rgb, lossless=True, **kwargs)
@@ -31,11 +32,13 @@ def _encode_jxl(pixels_rgb, output_path, quality=95, lossless=False, effort=7):
 
 
 def _encode_ultrahdr(pixels_rgb, output_path, quality=95, headroom=2.0):
-    from hdr_processor import prepare_base_sdr
+    from src.processor import prepare_base_sdr
     import imagecodecs
 
     sdr_8bit = prepare_base_sdr(pixels_rgb, headroom=headroom)
     h, w = sdr_8bit.shape[:2]
+    if h < 8 or w < 8:
+        raise ValueError("Ultra HDR JPEG output requires image dimensions of at least 8x8")
 
     sdr_rgba = np.dstack([sdr_8bit, np.full((h, w), 255, dtype=np.uint8)])
     alpha = np.ones((h, w), dtype=np.float16)
@@ -47,7 +50,7 @@ def _encode_ultrahdr(pixels_rgb, output_path, quality=95, headroom=2.0):
 
 
 def _encode_avif_hdr(pixels_rgb, output_path, quality=95, speed=6):
-    from hdr_processor import _linear_to_pq
+    from src.processor import _linear_to_pq
     import imagecodecs
 
     luminance = pixels_rgb * 100.0
@@ -68,7 +71,7 @@ def _encode_avif_hdr(pixels_rgb, output_path, quality=95, speed=6):
 
 
 def _encode_heif_hdr(pixels_rgb, output_path, quality=95):
-    from hdr_processor import _linear_to_pq
+    from src.processor import _linear_to_pq
     import pillow_heif
 
     luminance = pixels_rgb * 100.0
@@ -156,5 +159,7 @@ def encode_output(pixels, output_path, format=None, quality=95, speed=6,
         return encoder(rgb, output_path, quality=quality, lossless=lossless, effort=effort)
     elif format == "avif":
         return encoder(rgb, output_path, quality=quality, speed=speed)
-    else:
+    elif format == "ultrahdr":
         return encoder(rgb, output_path, quality=quality, headroom=headroom)
+    else:
+        return encoder(rgb, output_path, quality=quality)

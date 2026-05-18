@@ -1,5 +1,6 @@
 const state = {
   inputPath: "",
+  inputPaths: [],
   inputMode: "file",
   outputDir: "",
   running: false,
@@ -8,6 +9,7 @@ const state = {
 const elements = {
   form: document.getElementById("convertForm"),
   pickFileButton: document.getElementById("pickFileButton"),
+  pickFilesButton: document.getElementById("pickFilesButton"),
   pickDirectoryButton: document.getElementById("pickDirectoryButton"),
   pickOutputButton: document.getElementById("pickOutputButton"),
   clearOutputButton: document.getElementById("clearOutputButton"),
@@ -20,6 +22,7 @@ const elements = {
   qualityInput: document.getElementById("qualityInput"),
   speedInput: document.getElementById("speedInput"),
   headroomInput: document.getElementById("headroomInput"),
+  headroomSdrInput: document.getElementById("headroomSdrInput"),
   losslessInput: document.getElementById("losslessInput"),
   logOutput: document.getElementById("logOutput"),
   statusBadge: document.getElementById("statusBadge"),
@@ -48,6 +51,11 @@ function appendLog(text, stream = "stdout") {
   const prefix = stream === "stderr" ? "[stderr] " : stream === "system" ? "[cmd] " : "";
   elements.logOutput.textContent += `${prefix}${text}`;
   elements.logOutput.scrollTop = elements.logOutput.scrollHeight;
+
+  const progressMatch = text.match(/\[(\d+)\/(\d+)\]/);
+  if (progressMatch) {
+    elements.statusBadge.textContent = `Running ${progressMatch[1]}/${progressMatch[2]}`;
+  }
 }
 
 function getNumberValue(input, fallback) {
@@ -58,18 +66,24 @@ function getNumberValue(input, fallback) {
 function getOptions() {
   return {
     inputPath: state.inputPath,
+    inputPaths: state.inputPaths,
     inputMode: state.inputMode,
     outputDir: state.outputDir,
     format: elements.formatSelect.value,
     quality: Math.trunc(getNumberValue(elements.qualityInput, 95)),
     speed: Math.trunc(getNumberValue(elements.speedInput, 6)),
     maxHeadroom: getNumberValue(elements.headroomInput, 0),
+    headroom: getNumberValue(elements.headroomSdrInput, 2.0),
     lossless: elements.losslessInput.checked,
   };
 }
 
 function validateOptions(options) {
-  if (!options.inputPath) {
+  if (options.inputMode === "files") {
+    if (!Array.isArray(options.inputPaths) || options.inputPaths.length === 0) {
+      return "Select at least one image file first.";
+    }
+  } else if (!options.inputPath) {
     return "Select an input file or folder first.";
   }
   if (options.quality < 0 || options.quality > 100) {
@@ -81,6 +95,9 @@ function validateOptions(options) {
   if (options.maxHeadroom < 0) {
     return "Max headroom must be 0 or higher.";
   }
+  if (options.headroom <= 0) {
+    return "Base headroom must be greater than 0.";
+  }
   return "";
 }
 
@@ -88,7 +105,9 @@ function updateFormatState() {
   const isJxl = elements.formatSelect.value === "jxl";
   const isGainmap = elements.formatSelect.value === "gainmap";
   elements.losslessInput.disabled = !isJxl || state.running;
+  const isUltraHdr = elements.formatSelect.value === "ultrahdr";
   elements.headroomInput.disabled = !isGainmap || state.running;
+  elements.headroomSdrInput.disabled = !(isGainmap || isUltraHdr) || state.running;
 
   if (!isJxl) {
     elements.losslessInput.checked = false;
@@ -98,6 +117,7 @@ function updateFormatState() {
 function updateBusyState(running) {
   state.running = running;
   elements.pickFileButton.disabled = running;
+  elements.pickFilesButton.disabled = running;
   elements.pickDirectoryButton.disabled = running;
   elements.pickOutputButton.disabled = running;
   elements.clearOutputButton.disabled = running;
@@ -106,6 +126,7 @@ function updateBusyState(running) {
   elements.formatSelect.disabled = running;
   elements.qualityInput.disabled = running;
   elements.speedInput.disabled = running;
+  elements.headroomSdrInput.disabled = running;
   updateFormatState();
 }
 
@@ -116,9 +137,23 @@ async function chooseInputFile() {
   }
 
   state.inputPath = filePath;
+  state.inputPaths = [];
   state.inputMode = "file";
   setPathDisplay(elements.inputPath, filePath, "No input selected");
   setSummary("Input file selected.");
+}
+
+async function chooseInputFiles() {
+  const filePaths = await window.hdrTranscoder.selectInputFiles();
+  if (!filePaths || filePaths.length === 0) {
+    return;
+  }
+
+  state.inputPaths = filePaths;
+  state.inputPath = "";
+  state.inputMode = "files";
+  setPathDisplay(elements.inputPath, `${filePaths.length} files selected`, "No input selected");
+  setSummary(`${filePaths.length} files selected.`);
 }
 
 async function chooseInputDirectory() {
@@ -128,9 +163,19 @@ async function chooseInputDirectory() {
   }
 
   state.inputPath = directoryPath;
+  state.inputPaths = [];
   state.inputMode = "directory";
   setPathDisplay(elements.inputPath, directoryPath, "No input selected");
-  setSummary("Input folder selected. Default output is the same folder.");
+
+  const scan = await window.hdrTranscoder.scanDirectory(directoryPath);
+  if (scan.error) {
+    setSummary(scan.error);
+  } else if (scan.count === 0) {
+    setSummary("No supported image files found in this folder.");
+    setStatus("No Files", "error");
+  } else {
+    setSummary(`Folder selected. Found ${scan.count} supported image(s).`);
+  }
 }
 
 async function chooseOutputDirectory() {
@@ -159,6 +204,19 @@ async function startConversion(event) {
     setStatus("Needs Input", "error");
     setSummary(validationError);
     return;
+  }
+
+  const overwrite = await window.hdrTranscoder.checkOverwrite(options);
+  if (overwrite.existing && overwrite.existing.length > 0) {
+    const names = overwrite.existing.map((p) => p.split(/[/\\]/).pop()).slice(0, 5).join(", ");
+    const extra = overwrite.existing.length > 5 ? ` and ${overwrite.existing.length - 5} more` : "";
+    const confirmed = confirm(
+      `${overwrite.existing.length} output file(s) already exist:\n\n${names}${extra}\n\nOverwrite?`
+    );
+    if (!confirmed) {
+      setSummary("Conversion canceled.");
+      return;
+    }
   }
 
   updateBusyState(true);
@@ -219,6 +277,7 @@ if (!window.hdrTranscoder) {
   appendLog("Electron preload API is unavailable. Start this UI with npm start.\n", "stderr");
 } else {
   elements.pickFileButton.addEventListener("click", chooseInputFile);
+  elements.pickFilesButton.addEventListener("click", chooseInputFiles);
   elements.pickDirectoryButton.addEventListener("click", chooseInputDirectory);
   elements.pickOutputButton.addEventListener("click", chooseOutputDirectory);
   elements.clearOutputButton.addEventListener("click", clearOutputDirectory);

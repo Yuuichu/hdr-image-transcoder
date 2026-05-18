@@ -196,13 +196,14 @@ than JPEG XL.
 ## Project Structure
 
 ```text
-hdr2avif.py          Main CLI
+hdr2avif.py          Thin CLI entry point
 jxr2avif.py          Backward-compatible wrapper
 electron/            Local Electron GUI
-format_decoder.py    Input format detection and decoding
-hdr_processor.py     SDR base, PQ alternate, and gain map helpers
-avif_encoder.py      Gain map AVIF encoder using avifgainmaputil
-format_encoder.py    JPEG XL, Ultra HDR JPEG, standard AVIF, and HEIF encoders
+src/cli.py           CLI orchestration
+src/decoder.py       Input format detection and decoding
+src/processor.py     SDR base, PQ alternate, and gain map helpers
+src/gainmap.py       Gain map AVIF encoder using avifgainmaputil
+src/encoder.py       JPEG XL, Ultra HDR JPEG, standard AVIF, and HEIF encoders
 tools/libavif/       Bundled Windows libavif tools
 ```
 

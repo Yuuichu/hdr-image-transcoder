@@ -4,6 +4,11 @@ Multi-format HDR decoder.
 Decodes JXR, JXL, EXR, AVIF, HEIC, Ultra HDR, Radiance HDR, and common
 raster formats to float32 linear scRGB-like pixel data.
 """
+import re
+import subprocess
+import sys
+import tempfile
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np
@@ -50,7 +55,9 @@ def probe_format(filepath):
     try:
         with open(filepath, "rb") as f:
             header = f.read(32)
-    except OSError:
+    except OSError as e:
+        if not isinstance(e, FileNotFoundError):
+            raise
         if ext in {".jxr", ".wdp", ".hdp"}:
             return "jpegxr"
         return EXTENSION_MAP.get(ext)
@@ -131,7 +138,10 @@ def _decode_exr(raw):
 
 
 def _is_10bit_pq(pixels):
-    """Heuristic: 10-bit PQ data decoded as uint16 with values in [0, 1023]."""
+    """Heuristic: 10-bit PQ data decoded as uint16 with values in [0, 1023].
+
+    WARNING: Value-range heuristic alone can misidentify dark 16-bit SDR as PQ.
+    """
     if pixels.dtype != np.uint16:
         return False
     if pixels.size == 0:
@@ -139,17 +149,88 @@ def _is_10bit_pq(pixels):
     return pixels.max() <= 1023
 
 
+def _decode_pq(pq_values):
+    """Convert normalized PQ pixels to float32 scRGB."""
+    from src.processor import _pq_to_linear
+
+    linear_nits = _pq_to_linear(pq_values, max_nits=10000.0)
+    return linear_nits / 100.0
+
+
 def _decode_pq_10bit(pixels):
     """Convert 10-bit uint16 PQ pixels to float32 scRGB."""
-    from hdr_processor import _pq_to_linear
-
     pq_norm = pixels.astype(np.float32) / 1023.0
-    linear_nits = _pq_to_linear(pq_norm, max_nits=10000.0)
-    return linear_nits / 100.0
+    return _decode_pq(pq_norm)
+
+
+def _decode_gainmap_avif(raw):
+    """Decode an AVIF gain map by tone-mapping it to its HDR alternate."""
+    from src.gainmap import AVIFGAINMAPUTIL
+
+    if not AVIFGAINMAPUTIL.exists():
+        return None
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        input_path = tmp / "input.avif"
+        output_path = tmp / "tonemapped.avif"
+        input_path.write_bytes(raw)
+
+        metadata = subprocess.run(
+            [str(AVIFGAINMAPUTIL), "printmetadata", str(input_path)],
+            capture_output=True,
+            text=True,
+        )
+        if metadata.returncode != 0:
+            return None
+
+        text = f"{metadata.stdout}\n{metadata.stderr}"
+        match = re.search(r"Alternate headroom:\s*([0-9.+-]+)", text)
+        if not match:
+            return None
+
+        alternate_headroom = float(match.group(1))
+        if alternate_headroom <= 0:
+            return None
+
+        result = subprocess.run(
+            [
+                str(AVIFGAINMAPUTIL),
+                "tonemap",
+                str(input_path),
+                str(output_path),
+                "--headroom",
+                f"{alternate_headroom:.6f}",
+                "--cicp-output",
+                "1/16/0",
+                "-d",
+                "10",
+                "-y",
+                "444",
+                "-q",
+                "95",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise ValueError(f"Cannot decode AVIF gain map: {detail}")
+
+        import imagecodecs
+
+        pixels = imagecodecs.avif_decode(output_path.read_bytes())
+        if _is_10bit_pq(pixels):
+            return _decode_pq_10bit(pixels)
+        return _to_float32(pixels)
 
 
 def _decode_avif(raw):
     import imagecodecs
+
+    gainmap = _decode_gainmap_avif(raw)
+    if gainmap is not None:
+        return gainmap
 
     pixels = imagecodecs.avif_decode(raw)
     if _is_10bit_pq(pixels):
@@ -157,13 +238,47 @@ def _decode_avif(raw):
     return _to_float32(pixels)
 
 
-def _decode_heif(raw):
-    import imagecodecs
+def _decode_heif_with_pillow(raw):
+    import pillow_heif
 
-    pixels = imagecodecs.heif_decode(raw)
-    if _is_10bit_pq(pixels):
-        return _decode_pq_10bit(pixels)
+    heif_file = pillow_heif.open_heif(BytesIO(raw), convert_hdr_to_8bit=False)
+    image = heif_file[0]
+    width, height = image.size
+    mode = image.mode
+
+    if mode.endswith(";16"):
+        base_mode = mode[:-3]
+        dtype = np.uint16
+        bytes_per_sample = 2
+    else:
+        base_mode = mode
+        dtype = np.uint8
+        bytes_per_sample = 1
+
+    channels = len(base_mode)
+    row_values = image.stride // bytes_per_sample
+    row_pixels = np.frombuffer(image.data, dtype=dtype).reshape(height, row_values)
+    pixels = row_pixels[:, :width * channels].reshape(height, width, channels)
+
+    nclx = image.info.get("nclx_profile") or {}
+    if nclx.get("transfer_characteristics") == 16:
+        info = np.iinfo(dtype)
+        pq_norm = pixels.astype(np.float32) / float(info.max)
+        return _decode_pq(pq_norm)
+
     return _to_float32(pixels)
+
+
+def _decode_heif(raw):
+    try:
+        return _decode_heif_with_pillow(raw)
+    except Exception:
+        import imagecodecs
+
+        pixels = imagecodecs.heif_decode(raw)
+        if _is_10bit_pq(pixels):
+            return _decode_pq_10bit(pixels)
+        return _to_float32(pixels)
 
 
 def _decode_rgbe(raw):
@@ -181,7 +296,7 @@ def _decode_ultrahdr(raw):
         sdr_base = _to_float32(result[0])
         gainmap = _to_float32(result[1]) if len(result) > 1 else None
         if gainmap is not None:
-            return sdr_base * np.maximum(gainmap, 1.0)
+            return sdr_base * gainmap
         return sdr_base
     return _to_float32(result)
 
@@ -236,6 +351,8 @@ def decode_to_scrgb(filepath):
     else:
         primary_message = f"no decoder for detected format '{fmt}'"
 
+    if primary_message:
+        print(f"Warning: primary decoder failed, falling back to WIC: {primary_message}", file=sys.stderr)
     try:
         pixels = _ensure_rgba(_decode_wic(raw))
         height, width = pixels.shape[:2]
@@ -270,7 +387,7 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
-        print("Usage: python format_decoder.py <file>")
+        print("Usage: python src/decoder.py <file>")
         print()
         print("Supported formats:")
         for key, (name, exts) in SUPPORTED_FORMATS.items():

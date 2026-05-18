@@ -14,9 +14,19 @@ env/
 node_modules/
 dist/
 out/
+python/
 
 tmp_*
 *.tmp
 
+tests/fixtures/*.avif
+tests/fixtures/*.jxl
+tests/fixtures/*.jpg
+tests/fixtures/*.heic
+tests/fixtures/*.heif
+
 .DS_Store
 Thumbs.db
+
+.env*
+*.pem

@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
     <title>HDR Image Transcoder</title>
     <link rel="stylesheet" href="./styles.css">
   </head>
@@ -22,6 +23,7 @@
             <label>Input</label>
             <div class="button-row">
               <button id="pickFileButton" type="button">Choose File</button>
+              <button id="pickFilesButton" type="button">Choose Files</button>
               <button id="pickDirectoryButton" type="button">Choose Folder</button>
             </div>
             <div id="inputPath" class="path-display empty">No input selected</div>
@@ -39,32 +41,37 @@
           <div class="field-grid">
             <div class="field-group">
               <label for="formatSelect">Output Format</label>
-              <select id="formatSelect">
-                <option value="gainmap">Gainmap AVIF</option>
-                <option value="jxl">JPEG XL HDR</option>
-                <option value="ultrahdr">Ultra HDR JPEG</option>
-                <option value="avif">Standard HDR AVIF</option>
-                <option value="heif">HEIF HDR</option>
+              <select id="formatSelect" title="Output format for the converted image">
+                <option value="gainmap" title="Works in SDR viewers and shows HDR on supported displays. Best compatibility.">Gainmap AVIF</option>
+                <option value="jxl" title="Native float32 HDR. Best compression and quality.">JPEG XL HDR</option>
+                <option value="ultrahdr" title="JPEG with HDR gain map. Widely compatible with Google Photos and Android.">Ultra HDR JPEG</option>
+                <option value="avif" title="10-bit PQ HDR AVIF. Broad browser support.">Standard HDR AVIF</option>
+                <option value="heif" title="10-bit PQ HEVC HDR. Native on Apple devices.">HEIF HDR</option>
               </select>
             </div>
 
             <div class="field-group">
-              <label for="qualityInput">Quality</label>
+              <label for="qualityInput" title="Output quality, 0-100. Higher values produce larger files with better fidelity.">Quality</label>
               <input id="qualityInput" type="number" min="0" max="100" step="1" value="95">
             </div>
 
             <div class="field-group">
-              <label for="speedInput">Speed</label>
+              <label for="speedInput" title="Encoder speed, 0-10. 0 = slowest / best compression, 10 = fastest.">Speed</label>
               <input id="speedInput" type="number" min="0" max="10" step="1" value="6">
             </div>
 
             <div class="field-group">
-              <label for="headroomInput">Max Headroom</label>
+              <label for="headroomInput" title="Maximum gainmap headroom cap in stops. 0 = no cap, let the encoder decide.">Max Headroom</label>
               <input id="headroomInput" type="number" min="0" step="0.1" value="0">
+            </div>
+
+            <div class="field-group">
+              <label for="headroomSdrInput" title="SDR base image tonemap headroom in stops. Higher values preserve more highlight detail in the SDR base.">Base Headroom</label>
+              <input id="headroomSdrInput" type="number" min="0.1" step="0.1" value="2.0">
             </div>
           </div>
 
-          <label class="check-row">
+          <label class="check-row" title="Encode with mathematically lossless compression. Only available for JPEG XL output.">
             <input id="losslessInput" type="checkbox">
             <span>Lossless JPEG XL</span>
           </label>

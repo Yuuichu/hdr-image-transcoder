@@ -4,7 +4,10 @@
   "description": "Local Electron GUI for HDR image transcoding.",
   "main": "electron/main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "prepack": "node -e \"const fs=require('fs'),p=require('path');['hdr2avif.py','jxr2avif.py','requirements.txt'].forEach(f=>fs.copyFileSync(f,p.join('python',f)));['src'].forEach(d=>{const t=p.join('python',d);fs.mkdirSync(t,{recursive:true});fs.readdirSync(d).forEach(f=>fs.copyFileSync(p.join(d,f),p.join(t,f)))});['tools'].forEach(d=>{const t=p.join('python',d);fs.mkdirSync(t,{recursive:true});fs.readdirSync(d).forEach(f=>{const s=p.join(d,f);if(fs.statSync(s).isDirectory()){const t2=p.join(t,f);fs.mkdirSync(t2,{recursive:true});fs.readdirSync(s).forEach(f2=>fs.copyFileSync(p.join(s,f2),p.join(t2,f2)))}else fs.copyFileSync(s,p.join(t,f))})})\"",
+    "pack": "npm run prepack && electron-builder --dir",
+    "dist": "npm run prepack && electron-builder"
   },
   "keywords": [
     "hdr",
@@ -15,7 +18,29 @@
   ],
   "author": "Yuuichu",
   "license": "MIT",
+  "build": {
+    "appId": "com.yuuichu.hdr-image-transcoder",
+    "productName": "HDR Image Transcoder",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "python",
+        "to": "python"
+      }
+    ],
+    "win": {
+      "target": "portable",
+      "icon": null
+    }
+  },
   "devDependencies": {
-    "electron": "^42.1.0"
+    "electron": "^42.1.0",
+    "electron-builder": "^26.0.12"
   }
 }

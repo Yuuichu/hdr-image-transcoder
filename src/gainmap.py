@@ -4,10 +4,11 @@ AVIF gainmap encoder using libavif's avifgainmaputil.
 Combines SDR base + HDR alternate into a gainmap AVIF.
 """
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
-TOOLS_DIR = Path(__file__).parent / "tools" / "libavif"
+TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools" / "libavif"
 AVIFGAINMAPUTIL = TOOLS_DIR / "avifgainmaputil.exe"
 
 
@@ -54,6 +55,9 @@ def encode_gainmap_avif(sdr_8bit, hdr_16bit, output_path, quality=95, speed=6, m
             "--max-headroom", str(max_headroom),
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.stderr and result.stderr.strip():
+            from textwrap import indent
+            print(f"avifgainmaputil stderr:\n{indent(result.stderr.strip(), '  ')}", file=sys.stderr)
         if result.returncode != 0:
             from textwrap import indent
             detail = ""
