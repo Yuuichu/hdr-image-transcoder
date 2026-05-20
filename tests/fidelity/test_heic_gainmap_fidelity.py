@@ -13,6 +13,7 @@ from hdr_transcoder.formats.isobmff import (
     _find_box,
     _parse_boxes,
     find_item_property,
+    get_item_dimensions,
     read_heic_container,
     read_heic_gainmap_metadata,
 )
@@ -137,15 +138,26 @@ def test_gainmap_heic_structure_is_valid(tmp_path):
     assert "mdat" in box_types, "missing mdat box"
 
     container = read_heic_container(output_path)
-    assert 4 in container["item_extents"], "missing Apple HDR gain map auxiliary item"
-    assert 5 in container["item_extents"], "missing HDR gain map XMP item"
-    aux_type = find_item_property(container, 4, "auxC")
+    assert 2 in container["item_extents"], "missing Apple HDR gain map auxiliary item"
+    assert 3 in container["item_extents"], "missing HDR gain map XMP item"
+    assert 4 in container["item_extents"], "missing MakerApple EXIF item"
+    aux_type = find_item_property(container, 2, "auxC")
     assert aux_type == b"urn:com:apple:photo:2020:aux:hdrgainmap\x00"
-    assert ("auxl", 4, [1]) in _item_references(output_path)
-    assert ("cdsc", 5, [1]) in _item_references(output_path)
-    xmp_offset, xmp_length = container["item_extents"][5][0]
+    apple_gm_width, apple_gm_height = get_item_dimensions(container, 2)
+    assert apple_gm_width == w // 2
+    assert apple_gm_height == h // 2
+    refs = _item_references(output_path)
+    assert ("auxl", 2, [1]) in refs
+    assert ("cdsc", 3, [2]) in refs
+    assert ("cdsc", 4, [1]) in refs
+    xmp_offset, xmp_length = container["item_extents"][3][0]
     xmp_payload = data[xmp_offset:xmp_offset + xmp_length]
-    assert b"HDRGainMapVersion" in xmp_payload
+    assert b"HDRGainMapVersion>131072" in xmp_payload
+    assert b"HDRGainMapHeadroom" in xmp_payload
+    exif_offset, exif_length = container["item_extents"][4][0]
+    exif_payload = data[exif_offset:exif_offset + exif_length]
+    assert b"Exif\x00\x00MM\x00*" in exif_payload
+    assert b"Apple iOS\x00" in exif_payload
 
     # Verify tmap headroom
     headroom = _tmap_headroom(output_path)
@@ -157,9 +169,6 @@ def test_gainmap_heic_structure_is_valid(tmp_path):
     # Verify gainmap info via inspector
     info = inspect_image(output_path)
     assert info["gainmap"]["present"] is True
-    assert info["gainmap"]["alternate_color"]["primaries"] == 9
-    assert info["gainmap"]["alternate_color"]["transfer"] == 16
-    assert info["gainmap"]["alternate_color"]["matrix"] == 9
 
 
 @pytest.mark.fidelity
@@ -205,9 +214,6 @@ def test_cli_pq_tiff_to_gainmap_heic(tmp_path):
     assert info["gainmap"]["present"] is True
     assert info["gainmap"]["base_headroom"] == 0.0
     assert info["gainmap"]["alternate_headroom"] + 0.02 >= source_headroom
-    assert info["gainmap"]["alternate_color"]["primaries"] == 9
-    assert info["gainmap"]["alternate_color"]["transfer"] == 16
-    assert info["gainmap"]["alternate_color"]["matrix"] == 9
 
 
 @pytest.mark.fidelity
@@ -281,7 +287,7 @@ def test_gainmap_heic_info_json(tmp_path):
     payload = json.loads(info_json_path.read_text())
     assert payload["format"] == "gainmap-heic"
     assert payload["gainmap"]["present"] is True
-    assert payload["gainmap"]["alternateCicp"]["primaries"] == 9
+    assert payload["gainmap"]["alternateHeadroom"] is not None
 
 
 @pytest.mark.fidelity

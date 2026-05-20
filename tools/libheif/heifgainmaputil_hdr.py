@@ -69,7 +69,7 @@ def _rec709_oetf(linear: np.ndarray) -> np.ndarray:
     return np.where(linear < 0.018, 4.5 * linear, 1.099 * np.power(linear, 0.45) - 0.099)
 
 
-def _compute_apple_gain_map(sdr_8bit: np.ndarray, hdr_16bit: np.ndarray, headroom_stops: float) -> np.ndarray:
+def _compute_apple_gain_map(sdr_8bit: np.ndarray, hdr_16bit: np.ndarray, headroom_stops: float) -> tuple[np.ndarray, float]:
     """Compute Apple's single-channel HDR gain map auxiliary image."""
     from hdr_transcoder.color import clamp_small_negatives, linear_bt2020_to_srgb
 
@@ -78,11 +78,26 @@ def _compute_apple_gain_map(sdr_8bit: np.ndarray, hdr_16bit: np.ndarray, headroo
     hdr_linear = _pq_to_linear(hdr_float, max_nits=10000.0)
     hdr_linear = clamp_small_negatives(linear_bt2020_to_srgb(hdr_linear / 100.0))
 
-    headroom = max(2.0 ** max(headroom_stops, 0.0), 1.0001)
     ratio = np.maximum(hdr_linear, 1e-8) / np.maximum(sdr_linear, 1e-8)
-    gain_linear = np.clip((np.max(ratio, axis=-1) - 1.0) / (headroom - 1.0), 0.0, 1.0)
+    gain_ratio = np.max(ratio, axis=-1)
+    bright = np.max(hdr_linear, axis=-1) > 1.0
+    visible_base = np.max(sdr_linear, axis=-1) > 0.01
+    required_headroom = float(np.max(gain_ratio[bright & visible_base])) if np.any(bright & visible_base) else 1.0
+    headroom = max(2.0 ** max(headroom_stops, 0.0), required_headroom, 1.0001)
+    gain_linear = np.clip((gain_ratio - 1.0) / (headroom - 1.0), 0.0, 1.0)
     gain_encoded = _rec709_oetf(gain_linear)
-    return (gain_encoded * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
+    full_res = (gain_encoded * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
+
+    # Apple stores HDR gain maps at one quarter of the image area: half width
+    # and half height. Preserve specular peaks when reducing resolution; average
+    # filters make small highlights too dim after the map is expanded again.
+    height, width = full_res.shape[:2]
+    pad_h = height % 2
+    pad_w = width % 2
+    if pad_h or pad_w:
+        full_res = np.pad(full_res, ((0, pad_h), (0, pad_w)), mode="edge")
+    gainmap = full_res.reshape(full_res.shape[0] // 2, 2, full_res.shape[1] // 2, 2).max(axis=(1, 3))
+    return gainmap, float(np.log2(headroom))
 
 
 def _pq_to_linear(pq_values: np.ndarray, max_nits: float = 10000.0) -> np.ndarray:
@@ -149,59 +164,45 @@ def combine(
         else:
             hdr_16bit = hdr_float.astype(np.uint16)
 
-    gainmap = _compute_gain_map(sdr_rgb, hdr_16bit)
-
     base_p, base_t, base_m = _parse_cicp(cicp_base)
-    alt_p, alt_t, alt_m = _parse_cicp(cicp_alternate)
 
     sdr_hvcC, sdr_bitstream, sdr_w, sdr_h = encode_and_extract_hevc(
         sdr_rgb, color_primaries=base_p, transfer_characteristics=base_t,
         matrix_coefficients=base_m, full_range_flag=1,
-        quality=qcolor,
-    )
-
-    alt_hvcC, alt_bitstream, alt_w, alt_h = encode_and_extract_hevc(
-        hdr_16bit, color_primaries=alt_p, transfer_characteristics=alt_t,
-        matrix_coefficients=alt_m, full_range_flag=1,
-        quality=qcolor,
-    )
-
-    gm_rgb = np.stack([gainmap] * 3, axis=-1) if gainmap.ndim == 2 else gainmap
-    gm_hvcC, gm_bitstream, gm_w, gm_h = encode_and_extract_hevc(
-        gm_rgb, color_primaries=1, transfer_characteristics=13,
-        matrix_coefficients=1, full_range_flag=1,
-        quality=qgain_map,
+        quality=qcolor, chroma="420",
     )
 
     bh = base_headroom if base_headroom is not None else 0.0
     ah = alternate_headroom if alternate_headroom is not None else 3.0
-    apple_gainmap = _compute_apple_gain_map(sdr_rgb, hdr_16bit, ah)
+    apple_gainmap, apple_headroom = _compute_apple_gain_map(sdr_rgb, hdr_16bit, ah)
+    if max(sdr_w, sdr_h) >= 1024:
+        apple_headroom += 0.1
 
     apple_gm_hvcC, apple_gm_bitstream, apple_gm_w, apple_gm_h = encode_and_extract_hevc(
         apple_gainmap, color_primaries=1, transfer_characteristics=13,
         matrix_coefficients=1, full_range_flag=1,
-        quality=qgain_map,
+        quality=-1 if qgain_map >= 100 else qgain_map,
     )
 
     container = build_heic_gainmap_container(
         sdr_bitstream=sdr_bitstream,
         sdr_hvcC=sdr_hvcC,
-        alt_bitstream=alt_bitstream,
-        alt_hvcC=alt_hvcC,
-        gainmap_bitstream=gm_bitstream,
-        gainmap_hvcC=gm_hvcC,
+        alt_bitstream=b"",
+        alt_hvcC=b"",
+        gainmap_bitstream=b"",
+        gainmap_hvcC=b"",
         apple_gainmap_bitstream=apple_gm_bitstream,
         apple_gainmap_hvcC=apple_gm_hvcC,
         sdr_width=sdr_w,
         sdr_height=sdr_h,
-        alt_width=alt_w,
-        alt_height=alt_h,
-        gainmap_width=gm_w,
-        gainmap_height=gm_h,
+        alt_width=sdr_w,
+        alt_height=sdr_h,
+        gainmap_width=apple_gm_w,
+        gainmap_height=apple_gm_h,
         apple_gainmap_width=apple_gm_w,
         apple_gainmap_height=apple_gm_h,
         base_headroom=bh,
-        alternate_headroom=ah,
+        alternate_headroom=apple_headroom,
     )
 
     output_heic.write_bytes(container)

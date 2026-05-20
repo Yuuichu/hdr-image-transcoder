@@ -445,6 +445,37 @@ def _srgb_to_linear(srgb_pixels):
     return linear
 
 
+def _rec709_to_linear(rec709_pixels):
+    """Convert Rec.709 OETF-encoded values to linear light."""
+    rec709 = np.asarray(rec709_pixels, dtype=np.float32)
+    rec709 = np.clip(rec709, 0.0, 1.0)
+    return np.where(rec709 < 0.081, rec709 / 4.5, np.power((rec709 + 0.099) / 1.099, 1.0 / 0.45))
+
+
+def _resize_gainmap_values(values, target_shape):
+    """Resize 2D or 3D gain map values to the SDR image shape."""
+    if values.shape[:2] == target_shape:
+        return values
+
+    from PIL import Image
+
+    target_size = (target_shape[1], target_shape[0])
+    if values.ndim == 2:
+        image = Image.fromarray(values.astype(np.float32), mode="F")
+        return np.asarray(image.resize(target_size, Image.Resampling.BILINEAR), dtype=np.float32)
+
+    channels = [
+        np.asarray(
+            Image.fromarray(values[..., channel].astype(np.float32), mode="F").resize(
+                target_size, Image.Resampling.BILINEAR
+            ),
+            dtype=np.float32,
+        )
+        for channel in range(values.shape[2])
+    ]
+    return np.stack(channels, axis=-1)
+
+
 def _decode_gainmap_heif(raw):
     """Decode an ISO 21496-1 gainmap HEIC by applying the gainmap to the SDR base."""
     from hdr_transcoder.formats.isobmff import (
@@ -471,28 +502,49 @@ def _decode_gainmap_heif(raw):
         return None
 
     item_extents = container["item_extents"]
-    if 1 not in item_extents or 3 not in item_extents:
-        _warn("Gainmap HEIC missing item 1 (SDR base) or item 3 (gainmap)")
+    if 1 not in item_extents:
+        _warn("Gainmap HEIC missing item 1 (SDR base)")
         return None
 
     sdr_hvcC = find_item_property(container, 1, "hvcC")
-    gm_hvcC = find_item_property(container, 3, "hvcC")
-    if sdr_hvcC is None or gm_hvcC is None:
-        _warn("Gainmap HEIC missing hvcC for SDR base or gainmap")
+    if sdr_hvcC is None:
+        _warn("Gainmap HEIC missing hvcC for SDR base")
+        return None
+
+    gainmap_item_id = None
+    is_apple_gainmap = False
+    if 3 in item_extents and find_item_property(container, 3, "hvcC") is not None:
+        gainmap_item_id = 3
+    else:
+        for item_id in sorted(item_extents):
+            aux_type = find_item_property(container, item_id, "auxC")
+            if aux_type and b"urn:com:apple:photo:2020:aux:hdrgainmap" in aux_type:
+                gainmap_item_id = item_id
+                is_apple_gainmap = True
+                break
+
+    if gainmap_item_id is None:
+        _warn("Gainmap HEIC missing gain map item")
+        return None
+
+    gm_hvcC = find_item_property(container, gainmap_item_id, "hvcC")
+    if gm_hvcC is None:
+        _warn("Gainmap HEIC missing hvcC for gainmap")
         return None
 
     sdr_width, sdr_height = get_item_dimensions(container, 1)
-    gm_width, gm_height = get_item_dimensions(container, 3)
+    gm_width, gm_height = get_item_dimensions(container, gainmap_item_id)
     if sdr_width is None or gm_width is None:
         _warn("Gainmap HEIC missing ispe for SDR base or gainmap")
         return None
 
     sdr_bpc = get_item_bitdepth(container, 1)
-    gm_bpc = get_item_bitdepth(container, 3)
+    gm_bpc = get_item_bitdepth(container, gainmap_item_id)
     sdr_primaries, sdr_transfer, sdr_matrix = get_item_colr(container, 1)
+    gm_primaries, gm_transfer, gm_matrix = get_item_colr(container, gainmap_item_id)
 
     sdr_offset, sdr_length = item_extents[1][0]
-    gm_offset, gm_length = item_extents[3][0]
+    gm_offset, gm_length = item_extents[gainmap_item_id][0]
     sdr_bitstream = raw[sdr_offset:sdr_offset + sdr_length]
     gm_bitstream = raw[gm_offset:gm_offset + gm_length]
 
@@ -510,7 +562,7 @@ def _decode_gainmap_heif(raw):
 
     gm_heic = build_minimal_heic(
         gm_hvcC, gm_bitstream, gm_width, gm_height,
-        primaries=1, transfer=13, matrix=1,
+        primaries=gm_primaries, transfer=gm_transfer, matrix=gm_matrix,
         bits_per_channel=gm_bpc,
     )
     heif_file = pillow_heif.open_heif(BytesIO(gm_heic), convert_hdr_to_8bit=False)
@@ -525,16 +577,20 @@ def _decode_gainmap_heif(raw):
     else:
         gm_values = gm_float
 
-    if gm_values.shape[:2] != sdr_float.shape[:2]:
-        target_shape = sdr_float.shape[:2] if gm_values.ndim == 2 else (*sdr_float.shape[:2], gm_values.shape[2])
-        gm_values = np.resize(gm_values, target_shape)
+    gm_values = _resize_gainmap_values(gm_values, sdr_float.shape[:2])
 
     sdr_linear = _srgb_to_linear(sdr_float[..., :3])
 
-    gain_log = gm_values * 16.0 - 8.0
-    gain = np.power(2.0, gain_log)
-    gain = np.expand_dims(gain, axis=-1) if gain.ndim == 2 else gain
-    hdr_rgb = sdr_linear * gain
+    if is_apple_gainmap:
+        gain = _rec709_to_linear(gm_values)
+        gain = np.expand_dims(gain, axis=-1) if gain.ndim == 2 else gain
+        headroom = 2.0 ** max(alternate_headroom, 0.0)
+        hdr_rgb = sdr_linear * (1.0 + (headroom - 1.0) * gain)
+    else:
+        gain_log = gm_values * 16.0 - 8.0
+        gain = np.power(2.0, gain_log)
+        gain = np.expand_dims(gain, axis=-1) if gain.ndim == 2 else gain
+        hdr_rgb = sdr_linear * gain
     hdr_rgba = np.zeros((*hdr_rgb.shape[:2], 4), dtype=np.float32)
     hdr_rgba[..., :3] = hdr_rgb
     hdr_rgba[..., 3] = 1.0

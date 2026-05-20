@@ -545,13 +545,10 @@ def encode_and_extract_hevc(
     heif_file.add_frombytes(mode, (width, height), pixels.tobytes())
     with tempfile.NamedTemporaryFile(suffix=".heic", delete=False) as f:
         temp_path = f.name
-    # pillow_heif uses -1 for lossless; quality=100 is the CLI default and
-    # must preserve HDR peak fidelity for gainmap HEIC outputs.
-    heif_quality = -1 if quality >= 100 else quality
     try:
         heif_file.save(
             temp_path,
-            quality=heif_quality,
+            quality=quality,
             chroma=chroma,
             save_nclx_profile=True,
             color_primaries=color_primaries,
@@ -692,21 +689,96 @@ def build_minimal_heic(
     return ftyp + meta + mdat
 
 
-def build_apple_hdr_gainmap_xmp() -> bytes:
+def _rational64s(value: float, denominator: int = 1_000_000) -> tuple[int, int]:
+    """Convert a finite float to a signed rational pair for EXIF/MakerApple."""
+    if not math.isfinite(value):
+        value = 0.0
+    numerator = int(round(value * denominator))
+    return numerator, denominator
+
+
+def _apple_hdr_gain_from_headroom_stops(stops: float) -> float:
+    """Return MakerApple HDRGain value that maps to the requested headroom."""
+    if not math.isfinite(stops):
+        stops = 0.0
+    stops = max(stops, 0.0)
+    if stops <= 3.0:
+        return max((3.0 - stops) / 70.0, 0.0)
+    # Apple's public formula reaches 3 stops at zero gain. Allow a small
+    # negative rational so our metadata can describe source peaks above 8x SDR.
+    return (3.0 - stops) / 70.0
+
+
+def build_apple_makernote_exif(headroom_stops: float) -> bytes:
+    """Build a minimal EXIF item carrying MakerApple HDR gain map tags."""
+    hdr_headroom = 1.01
+    hdr_gain = _apple_hdr_gain_from_headroom_stops(headroom_stops)
+
+    maker_entries = [
+        (0x0001, 9, 1, 16),  # MakerNoteVersion
+        (0x0021, 10, 1, None),  # HDRHeadroom
+        (0x0030, 10, 1, None),  # HDRGain
+    ]
+    maker_ifd_offset = 14
+    maker_data_offset = maker_ifd_offset + 2 + len(maker_entries) * 12 + 4
+    maker = bytearray(b"Apple iOS\x00\x00\x01MM")
+    maker += struct.pack(">H", len(maker_entries))
+    rational_data = bytearray()
+    for tag, field_type, count, value in maker_entries:
+        if tag == 0x0021:
+            value = maker_data_offset + len(rational_data)
+            rational_data += struct.pack(">ii", *_rational64s(hdr_headroom))
+        elif tag == 0x0030:
+            value = maker_data_offset + len(rational_data)
+            rational_data += struct.pack(">ii", *_rational64s(hdr_gain))
+        maker += struct.pack(">HHII", tag, field_type, count, int(value))
+    maker += struct.pack(">I", 0)
+    maker += rational_data
+    maker_note = bytes(maker)
+
+    make = b"Apple\x00"
+    software = b"HDR Transcoder\x00"
+    ifd0_entry_count = 3
+    ifd0_offset = 8
+    ifd0_data_offset = ifd0_offset + 2 + ifd0_entry_count * 12 + 4
+    make_offset = ifd0_data_offset
+    software_offset = make_offset + len(make)
+    exif_ifd_offset = software_offset + len(software)
+    if exif_ifd_offset % 2:
+        software += b"\x00"
+        exif_ifd_offset += 1
+
+    exif_entry_count = 1
+    maker_note_offset = exif_ifd_offset + 2 + exif_entry_count * 12 + 4
+
+    tiff = bytearray(b"MM\x00*\x00\x00\x00\x08")
+    tiff += struct.pack(">H", ifd0_entry_count)
+    tiff += struct.pack(">HHII", 0x010F, 2, len(make), make_offset)
+    tiff += struct.pack(">HHII", 0x0131, 2, len(software.rstrip(b'\x00')) + 1, software_offset)
+    tiff += struct.pack(">HHII", 0x8769, 4, 1, exif_ifd_offset)
+    tiff += struct.pack(">I", 0)
+    tiff += make
+    tiff += software
+    tiff += struct.pack(">H", exif_entry_count)
+    tiff += struct.pack(">HHII", 0x927C, 7, len(maker_note), maker_note_offset)
+    tiff += struct.pack(">I", 0)
+    tiff += maker_note
+
+    return struct.pack(">I", 6) + b"Exif\x00\x00" + bytes(tiff)
+
+
+def build_apple_hdr_gainmap_xmp(headroom_stops: float) -> bytes:
     """Build primary XMP metadata used by Apple HDR gain map readers."""
-    return (
-        b'<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="HDR Transcoder">\n'
-        b'  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
-        b'    <rdf:Description rdf:about=""\n'
-        b'      xmlns:HDRGainMap="http://ns.apple.com/HDRGainMap/1.0/"\n'
-        b'      xmlns:apdi="http://ns.apple.com/pixeldatainfo/1.0/"\n'
-        b'      HDRGainMap:HDRGainMapVersion="65536"\n'
-        b'      apdi:AuxiliaryImageType="urn:com:apple:photo:2020:aux:hdrgainmap"\n'
-        b'      apdi:NativeFormat="1278226488"\n'
-        b'      apdi:StoredFormat="1278226488"/>\n'
-        b'  </rdf:RDF>\n'
-        b'</x:xmpmeta>'
-    )
+    headroom = 2.0 ** max(headroom_stops, 0.0)
+    return f"""<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="HDR Transcoder">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about=""
+      xmlns:HDRGainMap="http://ns.apple.com/HDRGainMap/1.0/">
+      <HDRGainMap:HDRGainMapVersion>131072</HDRGainMap:HDRGainMapVersion>
+      <HDRGainMap:HDRGainMapHeadroom>{headroom:.6f}</HDRGainMap:HDRGainMapHeadroom>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>""".encode("utf-8")
 
 
 def build_heic_gainmap_container(
@@ -733,27 +805,25 @@ def build_heic_gainmap_container(
 
     Items:
       1 (primary): SDR base image (8-bit sRGB)
-      2: HDR alternate image (10-bit Rec.2020 PQ)
-      3: Gain map (8-bit grayscale)
-      4: Apple HDR gain map auxiliary image (8-bit luma)
-      5: Primary XMP metadata signaling HDRGainMapVersion
+      2: Apple HDR gain map auxiliary image (8-bit luma, half resolution)
+      3: XMP metadata describing item 2
+      4: Primary EXIF metadata carrying MakerApple HDR headroom/gain tags
     """
-    xmp_data = build_apple_hdr_gainmap_xmp()
-    mdat_content = sdr_bitstream + alt_bitstream + gainmap_bitstream + apple_gainmap_bitstream + xmp_data
+    xmp_data = build_apple_hdr_gainmap_xmp(alternate_headroom)
+    exif_data = build_apple_makernote_exif(alternate_headroom)
+    mdat_content = sdr_bitstream + apple_gainmap_bitstream + xmp_data + exif_data
     mdat = build_box("mdat", mdat_content)
 
     sdr_in_mdat = 0
-    alt_in_mdat = len(sdr_bitstream)
-    gm_in_mdat = alt_in_mdat + len(alt_bitstream)
-    apple_gm_in_mdat = gm_in_mdat + len(gainmap_bitstream)
+    apple_gm_in_mdat = len(sdr_bitstream)
     xmp_in_mdat = apple_gm_in_mdat + len(apple_gainmap_bitstream)
+    exif_in_mdat = xmp_in_mdat + len(xmp_data)
 
     iinf = build_iinf([
         {"id": 1, "type": "hvc1", "name": "Primary"},
-        {"id": 2, "type": "hvc1", "name": "Alternate"},
-        {"id": 3, "type": "hvc1", "name": "GainMap"},
-        {"id": 4, "type": "hvc1", "name": "AppleHDRGainMap"},
-        {"id": 5, "type": "mime", "name": "", "content_type": "application/rdf+xml", "flags": 1},
+        {"id": 2, "type": "hvc1", "name": "AppleHDRGainMap"},
+        {"id": 3, "type": "mime", "name": "", "content_type": "application/rdf+xml", "flags": 1},
+        {"id": 4, "type": "Exif", "name": "", "flags": 1},
     ])
 
     properties = [
@@ -762,48 +832,37 @@ def build_heic_gainmap_container(
         {"type": "pixi", "bits_per_channel": [8, 8, 8]},
         {"type": "colr", "primaries": 1, "transfer": 13, "matrix": 1, "full_range": 1},
         {"type": "pasp"},
-        {"type": "hvcC", "data": alt_hvcC},
-        {"type": "ispe", "width": alt_width, "height": alt_height},
-        {"type": "pixi", "bits_per_channel": [10, 10, 10]},
-        {"type": "colr", "primaries": 9, "transfer": 16, "matrix": 9, "full_range": 1},
-        {"type": "hvcC", "data": gainmap_hvcC},
-        {"type": "ispe", "width": gainmap_width, "height": gainmap_height},
-        {"type": "pixi", "bits_per_channel": [8, 8, 8]},
-        {"type": "colr", "primaries": 1, "transfer": 13, "matrix": 1, "full_range": 1},
         {"type": "tmap", "base_headroom": base_headroom, "alternate_headroom": alternate_headroom},
         {"type": "hvcC", "data": apple_gainmap_hvcC},
         {"type": "ispe", "width": apple_gainmap_width, "height": apple_gainmap_height},
         {"type": "pixi", "bits_per_channel": [8]},
-        {"type": "colr", "primaries": 1, "transfer": 13, "matrix": 1, "full_range": 1},
+        {"type": "colr", "primaries": 2, "transfer": 2, "matrix": 2, "full_range": 1},
         {"type": "auxC", "aux_type": "urn:com:apple:photo:2020:aux:hdrgainmap"},
     ]
     ipco = build_ipco(properties)
     ipma = build_ipma({
-        1: [(1, True), (2, False), (3, False), (4, False), (5, False), (14, False)],
-        2: [(6, True), (7, False), (8, False), (9, False)],
-        3: [(10, True), (11, False), (12, False), (13, False)],
-        4: [(15, True), (16, False), (17, False), (18, False), (19, True)],
+        1: [(1, True), (2, False), (3, False), (4, False), (5, False), (6, False)],
+        2: [(7, True), (8, False), (9, False), (10, False), (11, True)],
     })
     iprp = build_box("iprp", ipco + ipma)
     iref = build_iref([
-        {"type": "auxl", "from": 4, "to": [1]},
-        {"type": "cdsc", "from": 5, "to": [1]},
+        {"type": "auxl", "from": 2, "to": [1]},
+        {"type": "cdsc", "from": 3, "to": [2]},
+        {"type": "cdsc", "from": 4, "to": [1]},
     ])
 
-    ftyp = build_ftyp("heic", ["mif1", "heic", "heix"])
+    ftyp = build_ftyp("heic", ["mif1", "heic", "heix", "tmap"])
 
     # First pass: build iloc with placeholder offsets to determine meta size
     iloc_placeholder = build_iloc([
         {"id": 1, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
          "extents": [{"offset": 0, "length": len(sdr_bitstream)}]},
         {"id": 2, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
-         "extents": [{"offset": 0, "length": len(alt_bitstream)}]},
-        {"id": 3, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
-         "extents": [{"offset": 0, "length": len(gainmap_bitstream)}]},
-        {"id": 4, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
          "extents": [{"offset": 0, "length": len(apple_gainmap_bitstream)}]},
-        {"id": 5, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+        {"id": 3, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
          "extents": [{"offset": 0, "length": len(xmp_data)}]},
+        {"id": 4, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+         "extents": [{"offset": 0, "length": len(exif_data)}]},
     ])
     meta_placeholder = build_meta(primary_item_id=1, iloc_data=iloc_placeholder, iinf_data=iinf, iref_data=iref, iprp_data=iprp)
     mdat_payload_start = len(ftyp) + len(meta_placeholder) + 8
@@ -813,13 +872,11 @@ def build_heic_gainmap_container(
         {"id": 1, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
          "extents": [{"offset": mdat_payload_start + sdr_in_mdat, "length": len(sdr_bitstream)}]},
         {"id": 2, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
-         "extents": [{"offset": mdat_payload_start + alt_in_mdat, "length": len(alt_bitstream)}]},
-        {"id": 3, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
-         "extents": [{"offset": mdat_payload_start + gm_in_mdat, "length": len(gainmap_bitstream)}]},
-        {"id": 4, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
          "extents": [{"offset": mdat_payload_start + apple_gm_in_mdat, "length": len(apple_gainmap_bitstream)}]},
-        {"id": 5, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+        {"id": 3, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
          "extents": [{"offset": mdat_payload_start + xmp_in_mdat, "length": len(xmp_data)}]},
+        {"id": 4, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+         "extents": [{"offset": mdat_payload_start + exif_in_mdat, "length": len(exif_data)}]},
     ])
     meta = build_meta(primary_item_id=1, iloc_data=iloc, iinf_data=iinf, iref_data=iref, iprp_data=iprp)
 

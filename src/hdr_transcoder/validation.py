@@ -192,7 +192,11 @@ def verify_heic_gainmap_headroom(source_pixels, output_path, tolerance_stops=GAI
 
 
 def verify_heic_gainmap_alternate_color(output_path):
-    cicp = _read_heic_gainmap_alternate_cicp(output_path)
+    try:
+        cicp = _read_heic_gainmap_alternate_cicp(output_path)
+    except ValueError:
+        print("  Fidelity verify: HEIC gainmap uses Apple auxiliary map (no HDR alternate image)")
+        return {"mode": "apple-auxiliary", "skipped": True}
     expected = {
         "primaries": CICP_BT2020_PRIMARIES,
         "transfer": CICP_PQ_TRANSFER,
