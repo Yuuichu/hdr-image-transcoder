@@ -165,7 +165,7 @@ def encode_gainmap_heic(
             "--qcolor", str(quality),
             "--qgain-map", str(quality),
             "--speed", str(speed),
-            "--cicp-base", f"{CICP_BT709_PRIMARIES}/{CICP_SRGB_TRANSFER}/{CICP_BT709_MATRIX}",
+            "--cicp-base", f"{CICP_BT2020_PRIMARIES}/{CICP_SRGB_TRANSFER}/{CICP_BT2020_MATRIX}",
             "--cicp-alternate", f"{CICP_BT2020_PRIMARIES}/{CICP_PQ_TRANSFER}/{CICP_BT2020_MATRIX}",
         ]
         if max_headroom is not None:

@@ -69,35 +69,98 @@ def _rec709_oetf(linear: np.ndarray) -> np.ndarray:
     return np.where(linear < 0.018, 4.5 * linear, 1.099 * np.power(linear, 0.45) - 0.099)
 
 
-def _compute_apple_gain_map(sdr_8bit: np.ndarray, hdr_16bit: np.ndarray, headroom_stops: float) -> tuple[np.ndarray, float]:
-    """Compute Apple's single-channel HDR gain map auxiliary image."""
+def _compute_apple_gain_map(
+    sdr_8bit: np.ndarray,
+    hdr_16bit: np.ndarray,
+    alternate_headroom: float = 8.0,
+) -> np.ndarray:
+    """Compute an Apple-style single-channel gain map from SDR base and HDR alternate.
+
+    Uses luminance-weighted ratios and Rec.709 OETF encoding.
+    The Apple reconstruction formula is:
+        hdr = sdr_linear * (1 + (headroom - 1) * gain_linear)
+
+    Args:
+        sdr_8bit: (H, W, 3) uint8 sRGB SDR base
+        hdr_16bit: (H, W, 3) uint16 PQ BT.2020 HDR alternate
+        alternate_headroom: linear headroom ratio (2^stops)
+
+    Returns:
+        (H, W) uint8 gain map, gamma-encoded
+    """
     from hdr_transcoder.color import clamp_small_negatives, linear_bt2020_to_srgb
 
-    sdr_linear = _srgb_to_linear(sdr_8bit)
-    hdr_float = hdr_16bit.astype(np.float32) / 65535.0
+    sdr_linear = _srgb_to_linear(sdr_8bit[..., :3])
+
+    hdr_float = hdr_16bit[..., :3].astype(np.float32) / 65535.0
     hdr_linear = _pq_to_linear(hdr_float, max_nits=10000.0)
     hdr_linear = clamp_small_negatives(linear_bt2020_to_srgb(hdr_linear / 100.0))
 
-    ratio = np.maximum(hdr_linear, 1e-8) / np.maximum(sdr_linear, 1e-8)
-    gain_ratio = np.max(ratio, axis=-1)
-    bright = np.max(hdr_linear, axis=-1) > 1.0
-    visible_base = np.max(sdr_linear, axis=-1) > 0.01
-    required_headroom = float(np.max(gain_ratio[bright & visible_base])) if np.any(bright & visible_base) else 1.0
-    headroom = max(2.0 ** max(headroom_stops, 0.0), required_headroom, 1.0001)
-    gain_linear = np.clip((gain_ratio - 1.0) / (headroom - 1.0), 0.0, 1.0)
-    gain_encoded = _rec709_oetf(gain_linear)
-    full_res = (gain_encoded * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
+    lum_weights = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    sdr_lum = np.maximum(np.dot(sdr_linear, lum_weights), 1e-8)
+    hdr_lum = np.maximum(np.dot(hdr_linear, lum_weights), 1e-8)
 
-    # Apple stores HDR gain maps at one quarter of the image area: half width
-    # and half height. Preserve specular peaks when reducing resolution; average
-    # filters make small highlights too dim after the map is expanded again.
+    ratio = hdr_lum / sdr_lum
+    headroom = max(alternate_headroom, float(np.max(ratio)))
+    gain_linear = (ratio - 1.0) / max(headroom - 1.0, 1e-8)
+    gain_linear = np.clip(gain_linear, 0.0, 1.0)
+
+    gain_709 = _rec709_oetf(gain_linear)
+    full_res = (gain_709 * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
     height, width = full_res.shape[:2]
     pad_h = height % 2
     pad_w = width % 2
     if pad_h or pad_w:
         full_res = np.pad(full_res, ((0, pad_h), (0, pad_w)), mode="edge")
-    gainmap = full_res.reshape(full_res.shape[0] // 2, 2, full_res.shape[1] // 2, 2).max(axis=(1, 3))
-    return gainmap, float(np.log2(headroom))
+    return full_res.reshape(full_res.shape[0] // 2, 2, full_res.shape[1] // 2, 2).max(axis=(1, 3))
+
+
+def _compute_iso21496_rgb_gain_map(
+    sdr_8bit: np.ndarray,
+    hdr_16bit: np.ndarray,
+    base_offset: float = 1.0 / 64.0,
+    alternate_offset: float = 1.0 / 64.0,
+    gamma: float = 1.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float]:
+    """Compute an ISO 21496-1 3-channel RGB gain map from SDR base and HDR alternate.
+
+    Args:
+        sdr_8bit: (H, W, 3) uint8 sRGB SDR base
+        hdr_16bit: (H, W, 3) uint16 PQ BT.2020 HDR alternate
+        base_offset: offset added to SDR before log2 ratio (default 1/64)
+        alternate_offset: offset added to HDR before log2 ratio (default 1/64)
+        gamma: encoding gamma for the gain map (default 1.0)
+
+    Returns:
+        (gainmap_8bit, gain_map_min, gain_map_max, gamma, base_offset, alternate_offset)
+        where gain_map_min/max are per-channel float32 arrays of shape (3,)
+    """
+    from hdr_transcoder.color import clamp_small_negatives, linear_bt2020_to_srgb
+
+    sdr_linear = _srgb_to_linear(sdr_8bit[..., :3])
+
+    hdr_float = hdr_16bit[..., :3].astype(np.float32) / 65535.0
+    hdr_linear = _pq_to_linear(hdr_float, max_nits=10000.0)
+    hdr_linear = clamp_small_negatives(linear_bt2020_to_srgb(hdr_linear / 100.0))
+
+    eps = np.float32(1e-8)
+    bo = np.float32(base_offset)
+    ao = np.float32(alternate_offset)
+    gain_log = np.log2(np.maximum(hdr_linear + ao, eps) / np.maximum(sdr_linear + bo, eps))
+
+    gain_min = gain_log.min(axis=(0, 1))
+    gain_max = gain_log.max(axis=(0, 1))
+    min_range = np.float32(0.01)
+    margin = np.maximum((min_range - (gain_max - gain_min)) * 0.5, 0.0)
+    gain_min -= margin
+    gain_max += margin
+    gain_range = np.maximum(gain_max - gain_min, 1e-8)
+
+    gain_norm = np.clip((gain_log - gain_min) / gain_range, 0.0, 1.0)
+    gain_gamma = np.power(gain_norm, 1.0 / np.maximum(np.float32(gamma), 1e-8))
+    gain_8bit = (gain_gamma * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
+
+    return gain_8bit, gain_min.astype(np.float64), gain_max.astype(np.float64), gamma, base_offset, alternate_offset
 
 
 def _pq_to_linear(pq_values: np.ndarray, max_nits: float = 10000.0) -> np.ndarray:
@@ -133,14 +196,14 @@ def combine(
     depth_gain_map: int = 12,
     yuv_gain_map: str = "444",
     speed: int = 0,
-    cicp_base: str = "1/13/1",
+    cicp_base: str = "9/13/9",
     cicp_alternate: str = "9/16/9",
     base_headroom: float | None = None,
     alternate_headroom: float | None = None,
 ) -> Path:
-    """Combine SDR base PNG and HDR alternate PNG into a gainmap HEIC."""
+    """Combine SDR base PNG and HDR alternate PNG into an ISO 21496-1 gainmap HEIC."""
     import imagecodecs
-    from hdr_transcoder.formats.isobmff import build_heic_gainmap_container, encode_and_extract_hevc
+    from hdr_transcoder.formats.isobmff import build_heic_gainmap_container, build_iso21496_tmap_metadata, encode_and_extract_hevc
 
     output_heic = Path(output_heic)
     output_heic.parent.mkdir(parents=True, exist_ok=True)
@@ -165,44 +228,76 @@ def combine(
             hdr_16bit = hdr_float.astype(np.uint16)
 
     base_p, base_t, base_m = _parse_cicp(cicp_base)
+    alt_p, alt_t, alt_m = _parse_cicp(cicp_alternate)
 
-    sdr_hvcC, sdr_bitstream, sdr_w, sdr_h = encode_and_extract_hevc(
+    bh = base_headroom if base_headroom is not None else 0.0
+    ah = alternate_headroom if alternate_headroom is not None else 3.0
+
+    gainmap_rgb, gm_min, gm_max, gm_gamma, gm_base_off, gm_alt_off = _compute_iso21496_rgb_gain_map(
+        sdr_rgb, hdr_16bit,
+    )
+
+    sdr_hvcC, sdr_bitstream, sdr_w, sdr_h, _ = encode_and_extract_hevc(
         sdr_rgb, color_primaries=base_p, transfer_characteristics=base_t,
         matrix_coefficients=base_m, full_range_flag=1,
         quality=qcolor, chroma="420",
     )
 
-    bh = base_headroom if base_headroom is not None else 0.0
-    ah = alternate_headroom if alternate_headroom is not None else 3.0
-    apple_gainmap, apple_headroom = _compute_apple_gain_map(sdr_rgb, hdr_16bit, ah)
-    if max(sdr_w, sdr_h) >= 1024:
-        apple_headroom += 0.1
+    alt_hvcC, alt_bitstream, alt_w, alt_h, alt_bits = encode_and_extract_hevc(
+        hdr_16bit, color_primaries=alt_p, transfer_characteristics=alt_t,
+        matrix_coefficients=alt_m, full_range_flag=1,
+        quality=qcolor, chroma="444",
+    )
 
-    apple_gm_hvcC, apple_gm_bitstream, apple_gm_w, apple_gm_h = encode_and_extract_hevc(
-        apple_gainmap, color_primaries=1, transfer_characteristics=13,
-        matrix_coefficients=1, full_range_flag=1,
+    gm_hvcC, gm_bitstream, gm_w, gm_h, gm_bits = encode_and_extract_hevc(
+        gainmap_rgb, color_primaries=base_p, transfer_characteristics=base_t,
+        matrix_coefficients=base_m, full_range_flag=1,
         quality=-1 if qgain_map >= 100 else qgain_map,
+    )
+
+    linear_headroom = 2.0 ** max(ah, 0.0)
+    apple_gm_1ch = _compute_apple_gain_map(sdr_rgb, hdr_16bit, alternate_headroom=linear_headroom)
+    apple_gm_hvcC, apple_gm_bitstream, apple_gm_w, apple_gm_h, apple_gm_bits = encode_and_extract_hevc(
+        apple_gm_1ch, color_primaries=2, transfer_characteristics=2,
+        matrix_coefficients=2, full_range_flag=1,
+        quality=-1 if qgain_map >= 100 else qgain_map,
+    )
+
+    tmap_meta = build_iso21496_tmap_metadata(
+        gain_map_min=gm_min,
+        gain_map_max=gm_max,
+        gamma=gm_gamma,
+        base_offset=gm_base_off,
+        alternate_offset=gm_alt_off,
+        base_headroom=bh,
+        alternate_headroom=ah,
     )
 
     container = build_heic_gainmap_container(
         sdr_bitstream=sdr_bitstream,
         sdr_hvcC=sdr_hvcC,
-        alt_bitstream=b"",
-        alt_hvcC=b"",
-        gainmap_bitstream=b"",
-        gainmap_hvcC=b"",
+        alt_bitstream=alt_bitstream,
+        alt_hvcC=alt_hvcC,
+        gainmap_bitstream=gm_bitstream,
+        gainmap_hvcC=gm_hvcC,
         apple_gainmap_bitstream=apple_gm_bitstream,
         apple_gainmap_hvcC=apple_gm_hvcC,
         sdr_width=sdr_w,
         sdr_height=sdr_h,
-        alt_width=sdr_w,
-        alt_height=sdr_h,
-        gainmap_width=apple_gm_w,
-        gainmap_height=apple_gm_h,
+        alt_width=alt_w,
+        alt_height=alt_h,
+        gainmap_width=gm_w,
+        gainmap_height=gm_h,
         apple_gainmap_width=apple_gm_w,
         apple_gainmap_height=apple_gm_h,
         base_headroom=bh,
-        alternate_headroom=apple_headroom,
+        alternate_headroom=ah,
+        base_primaries=base_p,
+        base_transfer=base_t,
+        base_matrix=base_m,
+        tmap_metadata=tmap_meta,
+        alt_bits_per_channel=alt_bits,
+        gainmap_bits_per_channel=gm_bits,
     )
 
     output_heic.write_bytes(container)
@@ -249,7 +344,7 @@ def main() -> int:
         depth_gain_map = 12
         yuv_gain_map = "444"
         speed = 0
-        cicp_base = "1/13/1"
+        cicp_base = "9/13/9"
         cicp_alternate = "9/16/9"
         base_headroom = None
         alternate_headroom = None

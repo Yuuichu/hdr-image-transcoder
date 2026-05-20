@@ -516,6 +516,123 @@ def read_heic_gainmap_alternate_cicp(source: bytes | bytearray | memoryview | st
     return read_heic_gainmap_alternate_cicp_from_container(container)
 
 
+def _parse_iso21496_tmap_metadata(blob: bytes) -> dict | None:
+    """Parse ISO 21496-1 binary gainmap metadata blob.
+
+    Returns per-channel parameters or None if parsing fails.
+    """
+    if len(blob) < 5:
+        return None
+    min_version = blob[0]
+    writer_version = blob[1]
+    flags = blob[2]
+    bo_enc = struct.unpack("<b", blob[3:4])[0]
+    ao_enc = struct.unpack("<b", blob[4:5])[0]
+
+    is_multi_channel = bool(flags & 1)
+    use_base_color_space = bool(flags & 2)
+    use_common_denom = bool(flags & 8)
+
+    base_offset = bo_enc / 64.0
+    alternate_offset = ao_enc / 64.0
+
+    channels = 3 if is_multi_channel else 1
+    result = {
+        "minVersion": min_version,
+        "writerVersion": writer_version,
+        "isMultiChannel": is_multi_channel,
+        "useBaseColorSpace": use_base_color_space,
+        "commonDenominatorMode": use_common_denom,
+        "baseOffset": base_offset,
+        "alternateOffset": alternate_offset,
+    }
+
+    expected_size = 5
+    if use_common_denom:
+        param_names = ["gainMapMin", "gainMapMax", "gamma", "baseOffset", "alternateOffset"]
+        expected_size = 5 + channels * len(param_names) * 4 + len(param_names) * 4
+        if len(blob) < expected_size:
+            return None
+        pos = 5
+        all_numerators = []
+        for _ in range(channels * len(param_names)):
+            all_numerators.append(struct.unpack("<i", blob[pos:pos + 4])[0])
+            pos += 4
+        denoms = []
+        for _ in range(len(param_names)):
+            denom = struct.unpack("<I", blob[pos:pos + 4])[0]
+            pos += 4
+            if denom == 0:
+                return None
+            denoms.append(denom)
+        for p_idx, name in enumerate(param_names):
+            numerators = all_numerators[p_idx * channels:(p_idx + 1) * channels]
+            result[name] = [n / denoms[p_idx] for n in numerators]
+    return result
+
+
+def read_heic_iso21496_metadata(container: dict) -> dict | None:
+    """Read ISO 21496-1 binary gainmap metadata from a HEIC container.
+
+    Reads from the tmap item (item 4 in our container).
+    """
+    item_extents = container.get("item_extents") or {}
+    data = container.get("data")
+    if data is None:
+        return None
+
+    tmap_item_id = None
+    for item_id in item_extents:
+        aux_type = find_item_property(container, item_id, "auxC")
+        if aux_type and b"urn:iso:std:iso:ts:21496:-1:aux:gainmap" in aux_type:
+            for ref_type, from_id, to_ids in _read_iref(container):
+                if ref_type == "dimg" and item_id in to_ids:
+                    tmap_item_id = from_id
+                    break
+            if tmap_item_id is not None:
+                break
+
+    if tmap_item_id is None:
+        for item_id in item_extents:
+            refs = _read_iref(container)
+            for ref_type, from_id, to_ids in refs:
+                if ref_type == "dimg" and ((1 in to_ids and 3 in to_ids) or (2 in to_ids and 3 in to_ids)):
+                    tmap_item_id = from_id
+                    break
+            if tmap_item_id is not None:
+                break
+
+    if tmap_item_id is None or tmap_item_id not in item_extents:
+        return None
+
+    tmap_offset, tmap_length = item_extents[tmap_item_id][0]
+    blob = data[tmap_offset:tmap_offset + tmap_length]
+    return _parse_iso21496_tmap_metadata(blob)
+
+
+def _read_iref(container: dict) -> list[tuple[str, int, list[int]]]:
+    """Extract iref references from a parsed HEIC container."""
+    meta_boxes = container.get("meta_boxes") or []
+    iref_box = _find_box(meta_boxes, "iref")
+    if iref_box is None:
+        return []
+
+    ref_data = _extract_box_payload(iref_box[3])
+    refs = []
+    for ref_type, _, _, ref_box in _parse_boxes(ref_data):
+        payload = _extract_box_payload(ref_box)
+        if len(payload) < 4:
+            continue
+        from_id = struct.unpack(">H", payload[:2])[0]
+        count = struct.unpack(">H", payload[2:4])[0]
+        to_ids = [
+            struct.unpack(">H", payload[4 + i * 2:6 + i * 2])[0]
+            for i in range(count)
+        ]
+        refs.append((ref_type, from_id, to_ids))
+    return refs
+
+
 def encode_and_extract_hevc(
     pixels: np.ndarray,
     color_primaries: int = 1,
@@ -524,10 +641,10 @@ def encode_and_extract_hevc(
     full_range_flag: int = 1,
     quality: int = 100,
     chroma: str = "444",
-) -> tuple[bytes, bytes, int, int]:
+) -> tuple[bytes, bytes, int, int, list[int]]:
     """Encode pixels via pillow_heif, extract hvcC config and HEVC bitstream.
 
-    Returns (hvcC_bytes, bitstream_bytes, width, height).
+    Returns (hvcC_bytes, bitstream_bytes, width, height, bits_per_channel).
     """
     import pillow_heif
 
@@ -645,7 +762,18 @@ def encode_and_extract_hevc(
     if not bitstreams:
         raise ValueError("No HEVC bitstreams extracted from HEIC")
 
-    return hvcC_bytes, bitstreams[0], width, height
+    pixi_box = _find_box(ipco_boxes, "pixi")
+    if pixi_box is not None:
+        pixi_payload = _extract_box_payload(pixi_box[3])
+        if len(pixi_payload) >= 5:
+            channel_count = pixi_payload[4]
+            bits_per_channel = list(pixi_payload[5:5 + channel_count])
+        else:
+            bits_per_channel = [8, 8, 8] if pixels.ndim == 3 else [8]
+    else:
+        bits_per_channel = [8, 8, 8] if pixels.ndim == 3 else [8]
+
+    return hvcC_bytes, bitstreams[0], width, height, bits_per_channel
 
 
 def build_minimal_heic(
@@ -702,10 +830,6 @@ def _apple_hdr_gain_from_headroom_stops(stops: float) -> float:
     if not math.isfinite(stops):
         stops = 0.0
     stops = max(stops, 0.0)
-    if stops <= 3.0:
-        return max((3.0 - stops) / 70.0, 0.0)
-    # Apple's public formula reaches 3 stops at zero gain. Allow a small
-    # negative rational so our metadata can describe source peaks above 8x SDR.
     return (3.0 - stops) / 70.0
 
 
@@ -781,6 +905,66 @@ def build_apple_hdr_gainmap_xmp(headroom_stops: float) -> bytes:
 </x:xmpmeta>""".encode("utf-8")
 
 
+def _encode_iso21496_signed_rational(value: float, denominator: int = 1_000_000) -> int:
+    """Encode a signed float as numerator for a shared-denominator rational."""
+    return int(round(np.clip(value, -2_147_483_648 / denominator, 2_147_483_647 / denominator) * denominator))
+
+
+def _encode_iso21496_unsigned_rational(value: float, denominator: int = 1_000_000) -> int:
+    """Encode an unsigned float as numerator for a shared-denominator rational."""
+    return int(round(np.clip(value, 0.0, 4_294_967_295 / denominator) * denominator))
+
+
+def build_iso21496_tmap_metadata(
+    gain_map_min: np.ndarray,
+    gain_map_max: np.ndarray,
+    gamma: float,
+    base_offset: float,
+    alternate_offset: float,
+    base_headroom: float = 0.0,
+    alternate_headroom: float = 3.0,
+) -> bytes:
+    """Build ISO 21496-1 binary gainmap metadata blob (85 bytes).
+
+    Uses common_denominator_mode (flags bit 3) for compact encoding.
+    gain_map_min/max are float32 arrays of shape (3,), per-channel log2 boost values.
+    gamma, base_offset, alternate_offset are scalars shared across channels.
+    """
+    DENOM = 1_000_000
+
+    flags = 0
+    flags |= 1  # bit 0: is_multi_channel (RGB)
+    flags |= 2  # bit 1: use_base_color_space
+    flags |= 8  # bit 3: common_denominator_mode
+
+    bo_enc = int(round(np.clip(base_offset * 64.0, -128, 127)))
+    ao_enc = int(round(np.clip(alternate_offset * 64.0, -128, 127)))
+
+    header = struct.pack("<BBBBB", 0, 0, flags, bo_enc & 0xFF, ao_enc & 0xFF)
+
+    channels = 3
+    channel_numerators = []
+    for ch in range(channels):
+        channel_numerators.append(_encode_iso21496_signed_rational(float(gain_map_min[ch]), DENOM))
+    for ch in range(channels):
+        channel_numerators.append(_encode_iso21496_signed_rational(float(gain_map_max[ch]), DENOM))
+    for ch in range(channels):
+        channel_numerators.append(_encode_iso21496_unsigned_rational(float(gamma), DENOM))
+    for ch in range(channels):
+        channel_numerators.append(_encode_iso21496_unsigned_rational(float(base_offset), DENOM))
+    for ch in range(channels):
+        channel_numerators.append(_encode_iso21496_unsigned_rational(float(alternate_offset), DENOM))
+
+    body = b"".join(struct.pack("<i", n) for n in channel_numerators)
+    body += struct.pack("<I", DENOM)  # gainMapMin denominator
+    body += struct.pack("<I", DENOM)  # gainMapMax denominator
+    body += struct.pack("<I", DENOM)  # gamma denominator
+    body += struct.pack("<I", DENOM)  # baseOffset denominator
+    body += struct.pack("<I", DENOM)  # alternateOffset denominator
+
+    return header + body
+
+
 def build_heic_gainmap_container(
     sdr_bitstream: bytes,
     sdr_hvcC: bytes,
@@ -800,84 +984,170 @@ def build_heic_gainmap_container(
     apple_gainmap_height: int,
     base_headroom: float = 0.0,
     alternate_headroom: float = 3.0,
+    base_primaries: int = 9,
+    base_transfer: int = 13,
+    base_matrix: int = 9,
+    tmap_metadata: bytes = b"",
+    alt_bits_per_channel: list[int] | None = None,
+    gainmap_bits_per_channel: list[int] | None = None,
 ) -> bytes:
-    """Build a complete ISO 21496-1 gainmap HEIC ISOBMFF container.
+    """Build a complete ISO 21496-1 + Apple gainmap HEIC ISOBMFF container.
 
     Items:
       1 (primary): SDR base image (8-bit sRGB)
-      2: Apple HDR gain map auxiliary image (8-bit luma, half resolution)
-      3: XMP metadata describing item 2
-      4: Primary EXIF metadata carrying MakerApple HDR headroom/gain tags
+      2: HDR alternate image (10-bit BT.2020 PQ), ISO 21496-1 aux alternateImage
+      3: RGB gain map image (8-bit), ISO 21496-1 aux gainmap
+      4: ISO 21496-1 tmap binary metadata item
+      5: XMP metadata (Apple HDR trigger)
+      6: EXIF metadata (MakerApple HDR headroom/gain tags)
+      7: Apple single-channel gain map (only when apple_gainmap_bitstream is non-empty)
     """
+    if alt_bits_per_channel is None:
+        alt_bits_per_channel = [10, 10, 10]
+    if gainmap_bits_per_channel is None:
+        gainmap_bits_per_channel = [8, 8, 8]
+
+    has_apple_gm = bool(apple_gainmap_bitstream)
+
     xmp_data = build_apple_hdr_gainmap_xmp(alternate_headroom)
     exif_data = build_apple_makernote_exif(alternate_headroom)
-    mdat_content = sdr_bitstream + apple_gainmap_bitstream + xmp_data + exif_data
+
+    mdat_content = (
+        sdr_bitstream + alt_bitstream + gainmap_bitstream +
+        tmap_metadata + xmp_data + exif_data +
+        (apple_gainmap_bitstream if has_apple_gm else b"")
+    )
     mdat = build_box("mdat", mdat_content)
 
     sdr_in_mdat = 0
-    apple_gm_in_mdat = len(sdr_bitstream)
-    xmp_in_mdat = apple_gm_in_mdat + len(apple_gainmap_bitstream)
+    alt_in_mdat = len(sdr_bitstream)
+    gainmap_in_mdat = alt_in_mdat + len(alt_bitstream)
+    tmap_meta_in_mdat = gainmap_in_mdat + len(gainmap_bitstream)
+    xmp_in_mdat = tmap_meta_in_mdat + len(tmap_metadata)
     exif_in_mdat = xmp_in_mdat + len(xmp_data)
+    apple_gm_in_mdat = exif_in_mdat + len(exif_data)
 
-    iinf = build_iinf([
+    iinf_items = [
         {"id": 1, "type": "hvc1", "name": "Primary"},
-        {"id": 2, "type": "hvc1", "name": "AppleHDRGainMap"},
-        {"id": 3, "type": "mime", "name": "", "content_type": "application/rdf+xml", "flags": 1},
-        {"id": 4, "type": "Exif", "name": "", "flags": 1},
-    ])
+        {"id": 2, "type": "hvc1", "name": "Alternate"},
+        {"id": 3, "type": "hvc1", "name": "GainMap"},
+        {"id": 4, "type": "tmap", "name": ""},
+        {"id": 5, "type": "mime", "name": "", "content_type": "application/rdf+xml", "flags": 1},
+        {"id": 6, "type": "Exif", "name": "", "flags": 1},
+    ]
+    if has_apple_gm:
+        iinf_items.append({"id": 7, "type": "hvc1", "name": "AppleGainMap"})
 
+    iinf = build_iinf(iinf_items)
+
+    # Property indices (1-based for ipma):
+    #   1-5:  SDR base (hvcC, ispe, pixi, colr, pasp)
+    #   6:    tmap (shared headroom)
+    #   7-11: Alternate (hvcC, ispe, pixi, colr, auxC)
+    #   12-16: Gainmap (hvcC, ispe, pixi, colr, auxC)
+    #   17-21: Apple gainmap (hvcC, ispe, pixi, colr, auxC), only when present
     properties = [
+        # 1-5: SDR base
         {"type": "hvcC", "data": sdr_hvcC},
         {"type": "ispe", "width": sdr_width, "height": sdr_height},
         {"type": "pixi", "bits_per_channel": [8, 8, 8]},
-        {"type": "colr", "primaries": 1, "transfer": 13, "matrix": 1, "full_range": 1},
+        {"type": "colr", "primaries": base_primaries, "transfer": base_transfer, "matrix": base_matrix, "full_range": 1},
         {"type": "pasp"},
+        # 6: tmap headroom property
         {"type": "tmap", "base_headroom": base_headroom, "alternate_headroom": alternate_headroom},
-        {"type": "hvcC", "data": apple_gainmap_hvcC},
-        {"type": "ispe", "width": apple_gainmap_width, "height": apple_gainmap_height},
-        {"type": "pixi", "bits_per_channel": [8]},
-        {"type": "colr", "primaries": 2, "transfer": 2, "matrix": 2, "full_range": 1},
-        {"type": "auxC", "aux_type": "urn:com:apple:photo:2020:aux:hdrgainmap"},
+        # 7-11: Alternate image
+        {"type": "hvcC", "data": alt_hvcC},
+        {"type": "ispe", "width": alt_width, "height": alt_height},
+        {"type": "pixi", "bits_per_channel": alt_bits_per_channel},
+        {"type": "colr", "primaries": 9, "transfer": 16, "matrix": 9, "full_range": 1},
+        {"type": "auxC", "aux_type": "urn:iso:std:iso:ts:21496:-1:aux:alternateImage"},
+        # 12-16: Gain map
+        {"type": "hvcC", "data": gainmap_hvcC},
+        {"type": "ispe", "width": gainmap_width, "height": gainmap_height},
+        {"type": "pixi", "bits_per_channel": gainmap_bits_per_channel},
+        {"type": "colr", "primaries": base_primaries, "transfer": base_transfer, "matrix": base_matrix, "full_range": 1},
+        {"type": "auxC", "aux_type": "urn:iso:std:iso:ts:21496:-1:aux:gainmap"},
     ]
+    apple_prop_start = len(properties) + 1  # 1-based index of first Apple GM property
+    if has_apple_gm:
+        properties.extend([
+            {"type": "hvcC", "data": apple_gainmap_hvcC},
+            {"type": "ispe", "width": apple_gainmap_width, "height": apple_gainmap_height},
+            {"type": "pixi", "bits_per_channel": [8]},
+            {"type": "colr", "primaries": 2, "transfer": 2, "matrix": 2, "full_range": 1},
+            {"type": "auxC", "aux_type": "urn:com:apple:photo:2020:aux:hdrgainmap"},
+        ])
     ipco = build_ipco(properties)
-    ipma = build_ipma({
+
+    ipma_mapping = {
         1: [(1, True), (2, False), (3, False), (4, False), (5, False), (6, False)],
         2: [(7, True), (8, False), (9, False), (10, False), (11, True)],
-    })
+        3: [(12, True), (13, False), (14, False), (15, False), (16, True)],
+        4: [(6, False), (2, False), (9, False), (10, False)],
+    }
+    if has_apple_gm:
+        ipma_mapping[7] = [
+            (apple_prop_start, True),
+            (apple_prop_start + 1, False),
+            (apple_prop_start + 2, False),
+            (apple_prop_start + 3, False),
+            (apple_prop_start + 4, True),
+        ]
+    ipma = build_ipma(ipma_mapping)
     iprp = build_box("iprp", ipco + ipma)
-    iref = build_iref([
+
+    iref_entries = [
         {"type": "auxl", "from": 2, "to": [1]},
-        {"type": "cdsc", "from": 3, "to": [2]},
-        {"type": "cdsc", "from": 4, "to": [1]},
-    ])
+        {"type": "auxl", "from": 3, "to": [1]},
+        {"type": "dimg", "from": 4, "to": [1, 3]},
+        {"type": "cdsc", "from": 5, "to": [7 if has_apple_gm else 3]},
+        {"type": "cdsc", "from": 6, "to": [1, 4]},
+    ]
+    if has_apple_gm:
+        iref_entries.append({"type": "auxl", "from": 7, "to": [1]})
+    iref = build_iref(iref_entries)
 
-    ftyp = build_ftyp("heic", ["mif1", "heic", "heix", "tmap"])
+    ftyp = build_ftyp("heic", ["mif1", "MiHB", "MiHA", "heix", "MiHE", "MiPr", "miaf", "heic", "tmap"])
 
-    # First pass: build iloc with placeholder offsets to determine meta size
-    iloc_placeholder = build_iloc([
+    iloc_entries = [
         {"id": 1, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
          "extents": [{"offset": 0, "length": len(sdr_bitstream)}]},
         {"id": 2, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
-         "extents": [{"offset": 0, "length": len(apple_gainmap_bitstream)}]},
+         "extents": [{"offset": 0, "length": len(alt_bitstream)}]},
         {"id": 3, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
-         "extents": [{"offset": 0, "length": len(xmp_data)}]},
+         "extents": [{"offset": 0, "length": len(gainmap_bitstream)}]},
         {"id": 4, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+         "extents": [{"offset": 0, "length": len(tmap_metadata)}]},
+        {"id": 5, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+         "extents": [{"offset": 0, "length": len(xmp_data)}]},
+        {"id": 6, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
          "extents": [{"offset": 0, "length": len(exif_data)}]},
-    ])
+    ]
+    if has_apple_gm:
+        iloc_entries.append(
+            {"id": 7, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+             "extents": [{"offset": 0, "length": len(apple_gainmap_bitstream)}]},
+        )
+    iloc_placeholder = build_iloc(iloc_entries)
     meta_placeholder = build_meta(primary_item_id=1, iloc_data=iloc_placeholder, iinf_data=iinf, iref_data=iref, iprp_data=iprp)
     mdat_payload_start = len(ftyp) + len(meta_placeholder) + 8
 
-    # Second pass: rebuild iloc with correct absolute file offsets
-    iloc = build_iloc([
-        {"id": 1, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
-         "extents": [{"offset": mdat_payload_start + sdr_in_mdat, "length": len(sdr_bitstream)}]},
-        {"id": 2, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
-         "extents": [{"offset": mdat_payload_start + apple_gm_in_mdat, "length": len(apple_gainmap_bitstream)}]},
-        {"id": 3, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
-         "extents": [{"offset": mdat_payload_start + xmp_in_mdat, "length": len(xmp_data)}]},
-        {"id": 4, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
-         "extents": [{"offset": mdat_payload_start + exif_in_mdat, "length": len(exif_data)}]},
-    ])
+    iloc_offsets = [
+        mdat_payload_start + sdr_in_mdat,
+        mdat_payload_start + alt_in_mdat,
+        mdat_payload_start + gainmap_in_mdat,
+        mdat_payload_start + tmap_meta_in_mdat,
+        mdat_payload_start + xmp_in_mdat,
+        mdat_payload_start + exif_in_mdat,
+    ]
+    if has_apple_gm:
+        iloc_offsets.append(mdat_payload_start + apple_gm_in_mdat)
+    iloc_entries_final = []
+    for i, entry in enumerate(iloc_entries):
+        new_entry = dict(entry)
+        new_entry["extents"] = [{"offset": iloc_offsets[i], "length": entry["extents"][0]["length"]}]
+        iloc_entries_final.append(new_entry)
+    iloc = build_iloc(iloc_entries_final)
     meta = build_meta(primary_item_id=1, iloc_data=iloc, iinf_data=iinf, iref_data=iref, iprp_data=iprp)
 
     return ftyp + meta + mdat

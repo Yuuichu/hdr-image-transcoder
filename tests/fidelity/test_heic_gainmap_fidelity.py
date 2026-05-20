@@ -81,7 +81,7 @@ def _item_references(heic_path):
 
 @pytest.mark.fidelity
 def test_gainmap_heic_structure_is_valid(tmp_path):
-    """Verify the ISOBMFF structure of a gainmap HEIC output."""
+    """Verify the ISOBMFF structure of an ISO 21496-1 gainmap HEIC output."""
     import imagecodecs
 
     # Build SDR base PNG (8-bit sRGB gradient)
@@ -129,7 +129,6 @@ def test_gainmap_heic_structure_is_valid(tmp_path):
     )
     assert result.returncode == 0, f"heifgainmaputil_hdr combine failed:\n{result.stdout}\n{result.stderr}"
 
-    # Verify ISOBMFF structure
     data = output_path.read_bytes()
     top_boxes = _parse_boxes(data)
     box_types = {bt for bt, _, _, _ in top_boxes}
@@ -138,35 +137,51 @@ def test_gainmap_heic_structure_is_valid(tmp_path):
     assert "mdat" in box_types, "missing mdat box"
 
     container = read_heic_container(output_path)
-    assert 2 in container["item_extents"], "missing Apple HDR gain map auxiliary item"
-    assert 3 in container["item_extents"], "missing HDR gain map XMP item"
-    assert 4 in container["item_extents"], "missing MakerApple EXIF item"
-    aux_type = find_item_property(container, 2, "auxC")
-    assert aux_type == b"urn:com:apple:photo:2020:aux:hdrgainmap\x00"
-    apple_gm_width, apple_gm_height = get_item_dimensions(container, 2)
-    assert apple_gm_width == w // 2
-    assert apple_gm_height == h // 2
+    extents = container["item_extents"]
+    assert 1 in extents, "missing SDR base item (1)"
+    assert 2 in extents, "missing HDR alternate item (2)"
+    assert 3 in extents, "missing RGB gainmap item (3)"
+    assert 4 in extents, "missing tmap metadata item (4)"
+    assert 5 in extents, "missing XMP item (5)"
+    assert 6 in extents, "missing EXIF item (6)"
+    assert 7 in extents, "missing Apple HDR gainmap item (7)"
+
+    alt_aux = find_item_property(container, 2, "auxC")
+    assert alt_aux is not None, "HDR alternate missing auxC"
+    assert b"urn:iso:std:iso:ts:21496:-1:aux:alternateImage" in alt_aux
+
+    gm_aux = find_item_property(container, 3, "auxC")
+    assert gm_aux is not None, "gainmap missing auxC"
+    assert b"urn:iso:std:iso:ts:21496:-1:aux:gainmap" in gm_aux
+
+    gm_width, gm_height = get_item_dimensions(container, 3)
+    assert gm_width == w
+    assert gm_height == h
+
     refs = _item_references(output_path)
-    assert ("auxl", 2, [1]) in refs
-    assert ("cdsc", 3, [2]) in refs
-    assert ("cdsc", 4, [1]) in refs
-    xmp_offset, xmp_length = container["item_extents"][3][0]
+    assert ("auxl", 2, [1]) in refs, "alternate not auxl-linked to base"
+    assert ("auxl", 3, [1]) in refs, "gainmap not auxl-linked to base"
+    assert ("dimg", 4, [1, 3]) in refs, "tmap dimg missing"
+    assert ("cdsc", 5, [7]) in refs, "Apple HDR XMP does not describe Apple gainmap"
+    assert ("cdsc", 6, [1, 4]) in refs, "EXIF does not describe primary/tmap items"
+    assert ("auxl", 7, [1]) in refs, "Apple gainmap not auxl-linked to base"
+
+    xmp_offset, xmp_length = container["item_extents"][5][0]
     xmp_payload = data[xmp_offset:xmp_offset + xmp_length]
     assert b"HDRGainMapVersion>131072" in xmp_payload
     assert b"HDRGainMapHeadroom" in xmp_payload
-    exif_offset, exif_length = container["item_extents"][4][0]
+
+    exif_offset, exif_length = container["item_extents"][6][0]
     exif_payload = data[exif_offset:exif_offset + exif_length]
     assert b"Exif\x00\x00MM\x00*" in exif_payload
     assert b"Apple iOS\x00" in exif_payload
 
-    # Verify tmap headroom
     headroom = _tmap_headroom(output_path)
     assert isinstance(headroom["base"], float)
     assert isinstance(headroom["alternate"], float)
     assert headroom["base"] >= 0
     assert headroom["alternate"] > 0
 
-    # Verify gainmap info via inspector
     info = inspect_image(output_path)
     assert info["gainmap"]["present"] is True
 

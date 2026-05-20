@@ -513,8 +513,15 @@ def _decode_gainmap_heif(raw):
 
     gainmap_item_id = None
     is_apple_gainmap = False
+    is_iso21496 = False
+    iso_meta = None
     if 3 in item_extents and find_item_property(container, 3, "hvcC") is not None:
         gainmap_item_id = 3
+        aux_type = find_item_property(container, 3, "auxC")
+        if aux_type and b"urn:iso:std:iso:ts:21496:-1:aux:gainmap" in aux_type:
+            is_iso21496 = True
+            from hdr_transcoder.formats.isobmff import read_heic_iso21496_metadata
+            iso_meta = read_heic_iso21496_metadata(container)
     else:
         for item_id in sorted(item_extents):
             aux_type = find_item_property(container, item_id, "auxC")
@@ -586,6 +593,17 @@ def _decode_gainmap_heif(raw):
         gain = np.expand_dims(gain, axis=-1) if gain.ndim == 2 else gain
         headroom = 2.0 ** max(alternate_headroom, 0.0)
         hdr_rgb = sdr_linear * (1.0 + (headroom - 1.0) * gain)
+    elif is_iso21496 and iso_meta is not None and gm_values.ndim == 3 and gm_values.shape[2] >= 3:
+        gm_norm = np.clip(gm_values, 0.0, 1.0)
+        gm_min = np.array(iso_meta["gainMapMin"], dtype=np.float32).reshape(1, 1, 3)
+        gm_max = np.array(iso_meta["gainMapMax"], dtype=np.float32).reshape(1, 1, 3)
+        gamma = np.array(iso_meta["gamma"], dtype=np.float32).reshape(1, 1, 3)
+        base_off = np.array(iso_meta["baseOffset"], dtype=np.float32).reshape(1, 1, 3)
+        alt_off = np.array(iso_meta["alternateOffset"], dtype=np.float32).reshape(1, 1, 3)
+        gain_norm = np.power(np.maximum(gm_norm, 0.0), gamma)
+        gain_log = gain_norm * (gm_max - gm_min) + gm_min
+        gain = np.power(2.0, gain_log)
+        hdr_rgb = (sdr_linear + base_off) * gain - alt_off
     else:
         gain_log = gm_values * 16.0 - 8.0
         gain = np.power(2.0, gain_log)
