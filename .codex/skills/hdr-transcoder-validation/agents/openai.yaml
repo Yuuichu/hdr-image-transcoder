@@ -1,0 +1,4 @@
+interface:
+  display_name: "HDR Transcoder Validation"
+  short_description: "Run HDR Image Transcoder fidelity and metadata validation."
+  default_prompt: "Validate HDR Image Transcoder changes with quick and fidelity checks."

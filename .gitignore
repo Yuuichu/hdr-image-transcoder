@@ -14,13 +14,18 @@ env/
 node_modules/
 dist/
 out/
+output/
 python/
 
 tmp_*
 *.tmp
+hdr-transcoder-ui-*.png
+hdr-transcoder-updated-ui.png
+post-fix-review-screenshot.png
 
 tests/fixtures/*.avif
 tests/fixtures/*.jxl
+!tests/fixtures/test_hdr_fix.jxl
 tests/fixtures/*.jpg
 tests/fixtures/*.heic
 tests/fixtures/*.heif
