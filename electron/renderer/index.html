@@ -17,16 +17,17 @@
         <div id="statusBadge" class="status-badge idle">Idle</div>
       </section>
 
+      <section id="runtimeStatus" class="runtime-status pending">Checking runtime...</section>
+
       <section class="layout">
         <form id="convertForm" class="panel">
           <div class="field-group">
             <label>Input</label>
             <div class="button-row">
-              <button id="pickFileButton" type="button">Choose File</button>
-              <button id="pickFilesButton" type="button">Choose Files</button>
+              <button id="pickFilesButton" type="button">Choose Images</button>
               <button id="pickDirectoryButton" type="button">Choose Folder</button>
             </div>
-            <div id="inputPath" class="path-display empty">No input selected</div>
+            <div id="inputPath" class="path-display empty">No images selected</div>
           </div>
 
           <div class="field-group">
@@ -42,27 +43,44 @@
             <div class="field-group">
               <label for="formatSelect">Output Format</label>
               <select id="formatSelect" title="Output format for the converted image">
-                <option value="gainmap" title="Works in SDR viewers and shows HDR on supported displays. Best compatibility.">Gainmap AVIF</option>
-                <option value="jxl" title="Native float32 HDR. Best compression and quality.">JPEG XL HDR</option>
-                <option value="ultrahdr" title="JPEG with HDR gain map. Widely compatible with Google Photos and Android.">Ultra HDR JPEG</option>
-                <option value="avif" title="10-bit PQ HDR AVIF. Broad browser support.">Standard HDR AVIF</option>
-                <option value="heif" title="10-bit PQ HEVC HDR. Native on Apple devices.">HEIF HDR</option>
+                <option value="jxl" selected title="JPEG XL master by default: lossless linear scRGB.">JPEG XL Master</option>
+                <option value="avif" title="10-bit PQ HDR AVIF. Display HDR delivery, not a strict master format.">Standard HDR AVIF</option>
+                <option value="heif" title="10-bit PQ HEVC HDR. Display HDR delivery, not a strict master format.">HEIF HDR</option>
+                <option value="ultrahdr" title="JPEG with HDR gain map. Compatibility delivery, not a strict master format.">Ultra HDR JPEG</option>
+                <option value="gainmap" title="Works in SDR viewers and shows HDR on supported displays. Compatibility delivery, not a strict master format.">Gainmap AVIF</option>
               </select>
+              <div id="fidelityBadge" class="fidelity-badge master">Master</div>
+            </div>
+
+            <div class="field-group">
+              <label for="jxlModeSelect">JPEG XL HDR Mode</label>
+              <select id="jxlModeSelect" title="JPEG XL color encoding mode">
+                <option value="rec2020-pq" title="Rec.2020 primaries with PQ transfer. Best for HDR display and sharing.">Display HDR (Rec.2020 PQ)</option>
+                <option value="linear-srgb" selected title="Linear sRGB/scRGB archive mode. Best for reprocessing, not viewer compatibility.">Linear Archive (scRGB)</option>
+              </select>
+              <div class="field-hint">Linear Archive + lossless is the strict master path. Display HDR is for viewing and sharing.</div>
             </div>
 
             <div class="field-group">
               <label for="qualityInput" title="Output quality, 0-100. Higher values produce larger files with better fidelity.">Quality</label>
-              <input id="qualityInput" type="number" min="0" max="100" step="1" value="95">
+              <input id="qualityInput" type="number" min="0" max="100" step="1" value="100">
             </div>
 
             <div class="field-group">
               <label for="speedInput" title="Encoder speed, 0-10. 0 = slowest / best compression, 10 = fastest.">Speed</label>
-              <input id="speedInput" type="number" min="0" max="10" step="1" value="6">
+              <input id="speedInput" type="number" min="0" max="10" step="1" value="0">
+              <div class="field-hint">0 is slowest with best compression efficiency. 10 is fastest. Quality stays controlled by Quality.</div>
             </div>
 
             <div class="field-group">
-              <label for="headroomInput" title="Maximum gainmap headroom cap in stops. 0 = no cap, let the encoder decide.">Max Headroom</label>
-              <input id="headroomInput" type="number" min="0" step="0.1" value="0">
+              <label for="gainmapHeadroomModeSelect" title="Gainmap AVIF headroom metadata mode">
+                Headroom Mode
+              </label>
+              <select id="gainmapHeadroomModeSelect" title="Source Peak writes the source HDR peak as Alternate headroom. Auto keeps libavif metadata.">
+                <option value="source-peak" selected>Source Peak</option>
+                <option value="auto">Auto</option>
+              </select>
+              <div class="field-hint">Source Peak preserves HDR peak metadata for gain map AVIF. Auto keeps libavif's computed metadata.</div>
             </div>
 
             <div class="field-group">
@@ -72,9 +90,54 @@
           </div>
 
           <label class="check-row" title="Encode with mathematically lossless compression. Only available for JPEG XL output.">
-            <input id="losslessInput" type="checkbox">
+            <input id="losslessInput" type="checkbox" checked>
             <span>Lossless JPEG XL</span>
           </label>
+
+          <label class="check-row" title="Create a sidecar SDR PNG with output image debug information overlaid. The converted output is not modified.">
+            <input id="debugOverlayInput" type="checkbox">
+            <span>Debug Info Overlay</span>
+          </label>
+
+          <label class="check-row" title="Create a sidecar JSON file with format, CICP, headroom, peak, verify, and inspector metadata.">
+            <input id="infoJsonInput" type="checkbox">
+            <span>Output Info JSON</span>
+          </label>
+
+          <div class="subsection">
+            <h2>Output Naming</h2>
+            <div class="naming-grid">
+              <div class="field-group compact">
+                <label for="namePrefixInput">Prefix</label>
+                <input id="namePrefixInput" type="text" placeholder="HDR_">
+              </div>
+              <div class="field-group compact">
+                <label for="nameSuffixInput">Suffix</label>
+                <input id="nameSuffixInput" type="text" placeholder="_converted">
+              </div>
+              <div class="field-group compact">
+                <label for="nameFindInput">Find</label>
+                <input id="nameFindInput" type="text" placeholder="Screenshot">
+              </div>
+              <div class="field-group compact">
+                <label for="nameReplaceInput">Replace With</label>
+                <input id="nameReplaceInput" type="text" placeholder="HDR">
+              </div>
+              <div class="field-group compact wide">
+                <label for="namePatternInput">Rename Pattern</label>
+                <input id="namePatternInput" type="text" value="{name}" placeholder="Forza_HDR_{n}">
+              </div>
+              <div class="field-group compact">
+                <label for="nameStartInput">Start</label>
+                <input id="nameStartInput" type="number" min="0" step="1" value="1">
+              </div>
+              <div class="field-group compact">
+                <label for="namePaddingInput">Padding</label>
+                <input id="namePaddingInput" type="number" min="0" step="1" value="3">
+              </div>
+            </div>
+            <div class="field-hint">Use {name} for the original filename and {n} for numbering. Leave pattern as {name} to keep original names.</div>
+          </div>
 
           <div class="action-row">
             <button id="startButton" type="submit" class="primary">Start Conversion</button>
@@ -84,12 +147,21 @@
           <div id="summary" class="summary">Ready.</div>
         </form>
 
-        <section class="log-panel">
-          <div class="log-header">
-            <h2>Log</h2>
-            <button id="clearLogButton" type="button" class="secondary">Clear</button>
-          </div>
-          <pre id="logOutput" class="log-output"></pre>
+        <section class="side-column">
+          <section class="info-panel">
+            <div class="panel-header">
+              <h2>Image Info</h2>
+            </div>
+            <div id="imageInfoContent" class="image-info-content empty">Select image files to inspect technical metadata.</div>
+          </section>
+
+          <section class="log-panel">
+            <div class="log-header">
+              <h2>Log</h2>
+              <button id="clearLogButton" type="button" class="secondary">Clear</button>
+            </div>
+            <pre id="logOutput" class="log-output"></pre>
+          </section>
         </section>
       </section>
     </main>

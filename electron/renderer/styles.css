@@ -36,7 +36,8 @@ select {
 
 button,
 select,
-input[type="number"] {
+input[type="number"],
+input[type="text"] {
   min-height: 36px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -62,7 +63,8 @@ input:disabled {
 }
 
 select,
-input[type="number"] {
+input[type="number"],
+input[type="text"] {
   width: 100%;
   padding: 0 10px;
 }
@@ -79,6 +81,29 @@ input[type="number"] {
   justify-content: space-between;
   gap: 20px;
   margin-bottom: 18px;
+}
+
+.runtime-status {
+  margin: -6px 0 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.runtime-status.ok {
+  color: var(--success);
+  border-color: #9dd4b0;
+  background: #eaf7ee;
+}
+
+.runtime-status.error {
+  color: var(--danger);
+  border-color: #f1aaa3;
+  background: #fff0ee;
 }
 
 h1,
@@ -144,6 +169,7 @@ h2 {
 }
 
 .panel,
+.info-panel,
 .log-panel {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -156,6 +182,10 @@ h2 {
 
 .field-group {
   margin-bottom: 16px;
+}
+
+.field-group.compact {
+  margin-bottom: 10px;
 }
 
 label {
@@ -197,8 +227,63 @@ label {
 
 .field-grid {
   display: grid;
-  grid-template-columns: 1fr 0.58fr;
+  grid-template-columns: 1fr 1fr;
   gap: 14px;
+}
+
+.field-hint {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.fidelity-badge {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.fidelity-badge.master {
+  color: var(--success);
+  border-color: #9dd4b0;
+  background: #eaf7ee;
+}
+
+.fidelity-badge.display {
+  color: var(--accent-dark);
+  border-color: #9dbff2;
+  background: #edf4ff;
+}
+
+.fidelity-badge.compat {
+  color: var(--warning);
+  border-color: #e7c873;
+  background: #fff8dd;
+}
+
+.subsection {
+  margin: 4px 0 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.subsection h2 {
+  margin-bottom: 12px;
+}
+
+.naming-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+}
+
+.naming-grid .wide {
+  grid-column: 1 / -1;
 }
 
 .check-row {
@@ -256,8 +341,120 @@ label {
   line-height: 1.35;
 }
 
+.side-column {
+  display: grid;
+  gap: 14px;
+}
+
+.info-panel {
+  min-height: 210px;
+}
+
+.panel-header {
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.image-info-content {
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.image-info-content.empty,
+.image-info-content.loading,
+.image-info-content.error {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.image-info-content.error {
+  color: var(--danger);
+}
+
+.image-info-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fbfcfd;
+}
+
+.image-info-card + .image-info-card {
+  margin-top: 10px;
+}
+
+.image-info-card summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 36px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.image-info-body {
+  padding: 4px 10px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.info-row {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  gap: 10px;
+  padding: 5px 0;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.info-label {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.info-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: var(--mono);
+}
+
+.info-row.warning .info-value {
+  color: var(--warning);
+}
+
+.info-row.error .info-value {
+  color: var(--danger);
+}
+
+.mini-badge {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.mini-badge.hdr {
+  color: var(--accent-dark);
+  border-color: #9dbff2;
+  background: #edf4ff;
+}
+
+.mini-badge.error {
+  color: var(--danger);
+  border-color: #f1aaa3;
+  background: #fff0ee;
+}
+
 .log-panel {
-  min-height: 540px;
+  min-height: 380px;
   display: grid;
   grid-template-rows: auto 1fr;
 }
