@@ -1,5 +1,6 @@
 """Fidelity tests for gainmap HEIC output."""
 import math
+import struct
 import subprocess
 import sys
 
@@ -7,7 +8,14 @@ import numpy as np
 import pytest
 
 from hdr_transcoder.formats.decoder import decode_to_scrgb
-from hdr_transcoder.formats.isobmff import _parse_boxes, read_heic_gainmap_metadata
+from hdr_transcoder.formats.isobmff import (
+    _extract_box_payload,
+    _find_box,
+    _parse_boxes,
+    find_item_property,
+    read_heic_container,
+    read_heic_gainmap_metadata,
+)
 from hdr_transcoder.inspector import inspect_image
 
 from helpers import ROOT, run_python, stop_delta
@@ -46,6 +54,28 @@ def _tmap_headroom(heic_path):
         "base": metadata["baseHeadroom"],
         "alternate": metadata["alternateHeadroom"],
     }
+
+
+def _item_references(heic_path):
+    data = heic_path.read_bytes()
+    top_boxes = _parse_boxes(data)
+    meta_box = _find_box(top_boxes, "meta")
+    assert meta_box is not None, "HEIC missing meta box"
+    meta_boxes = _parse_boxes(_extract_box_payload(meta_box[3]))
+    iref_box = _find_box(meta_boxes, "iref")
+    assert iref_box is not None, "HEIC missing iref box"
+
+    refs = []
+    for ref_type, _, _, ref_box in _parse_boxes(_extract_box_payload(iref_box[3])):
+        payload = ref_box[8:]
+        from_id = struct.unpack(">H", payload[:2])[0]
+        count = struct.unpack(">H", payload[2:4])[0]
+        to_ids = [
+            struct.unpack(">H", payload[4 + i * 2:6 + i * 2])[0]
+            for i in range(count)
+        ]
+        refs.append((ref_type, from_id, to_ids))
+    return refs
 
 
 @pytest.mark.fidelity
@@ -105,6 +135,17 @@ def test_gainmap_heic_structure_is_valid(tmp_path):
     assert "ftyp" in box_types, "missing ftyp box"
     assert "meta" in box_types, "missing meta box"
     assert "mdat" in box_types, "missing mdat box"
+
+    container = read_heic_container(output_path)
+    assert 4 in container["item_extents"], "missing Apple HDR gain map auxiliary item"
+    assert 5 in container["item_extents"], "missing HDR gain map XMP item"
+    aux_type = find_item_property(container, 4, "auxC")
+    assert aux_type == b"urn:com:apple:photo:2020:aux:hdrgainmap\x00"
+    assert ("auxl", 4, [1]) in _item_references(output_path)
+    assert ("cdsc", 5, [1]) in _item_references(output_path)
+    xmp_offset, xmp_length = container["item_extents"][5][0]
+    xmp_payload = data[xmp_offset:xmp_offset + xmp_length]
+    assert b"HDRGainMapVersion" in xmp_payload
 
     # Verify tmap headroom
     headroom = _tmap_headroom(output_path)

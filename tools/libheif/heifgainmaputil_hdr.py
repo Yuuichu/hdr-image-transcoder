@@ -64,6 +64,27 @@ def _compute_gain_map(sdr_8bit: np.ndarray, hdr_16bit: np.ndarray) -> np.ndarray
     return (gain_norm * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
 
 
+def _rec709_oetf(linear: np.ndarray) -> np.ndarray:
+    linear = np.clip(linear, 0.0, 1.0)
+    return np.where(linear < 0.018, 4.5 * linear, 1.099 * np.power(linear, 0.45) - 0.099)
+
+
+def _compute_apple_gain_map(sdr_8bit: np.ndarray, hdr_16bit: np.ndarray, headroom_stops: float) -> np.ndarray:
+    """Compute Apple's single-channel HDR gain map auxiliary image."""
+    from hdr_transcoder.color import clamp_small_negatives, linear_bt2020_to_srgb
+
+    sdr_linear = _srgb_to_linear(sdr_8bit)
+    hdr_float = hdr_16bit.astype(np.float32) / 65535.0
+    hdr_linear = _pq_to_linear(hdr_float, max_nits=10000.0)
+    hdr_linear = clamp_small_negatives(linear_bt2020_to_srgb(hdr_linear / 100.0))
+
+    headroom = max(2.0 ** max(headroom_stops, 0.0), 1.0001)
+    ratio = np.maximum(hdr_linear, 1e-8) / np.maximum(sdr_linear, 1e-8)
+    gain_linear = np.clip((np.max(ratio, axis=-1) - 1.0) / (headroom - 1.0), 0.0, 1.0)
+    gain_encoded = _rec709_oetf(gain_linear)
+    return (gain_encoded * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
+
+
 def _pq_to_linear(pq_values: np.ndarray, max_nits: float = 10000.0) -> np.ndarray:
     """Convert PQ-encoded values to linear nits using ST.2084 EOTF."""
     m1 = 0.1593017578125
@@ -154,6 +175,13 @@ def combine(
 
     bh = base_headroom if base_headroom is not None else 0.0
     ah = alternate_headroom if alternate_headroom is not None else 3.0
+    apple_gainmap = _compute_apple_gain_map(sdr_rgb, hdr_16bit, ah)
+
+    apple_gm_hvcC, apple_gm_bitstream, apple_gm_w, apple_gm_h = encode_and_extract_hevc(
+        apple_gainmap, color_primaries=1, transfer_characteristics=13,
+        matrix_coefficients=1, full_range_flag=1,
+        quality=qgain_map,
+    )
 
     container = build_heic_gainmap_container(
         sdr_bitstream=sdr_bitstream,
@@ -162,12 +190,16 @@ def combine(
         alt_hvcC=alt_hvcC,
         gainmap_bitstream=gm_bitstream,
         gainmap_hvcC=gm_hvcC,
+        apple_gainmap_bitstream=apple_gm_bitstream,
+        apple_gainmap_hvcC=apple_gm_hvcC,
         sdr_width=sdr_w,
         sdr_height=sdr_h,
         alt_width=alt_w,
         alt_height=alt_h,
         gainmap_width=gm_w,
         gainmap_height=gm_h,
+        apple_gainmap_width=apple_gm_w,
+        apple_gainmap_height=apple_gm_h,
         base_headroom=bh,
         alternate_headroom=ah,
     )

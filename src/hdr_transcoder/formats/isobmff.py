@@ -94,6 +94,11 @@ def build_colr_nclx(
     return build_box("colr", data)
 
 
+def build_auxc(aux_type: str) -> bytes:
+    """Build auxC property with a null-terminated auxiliary image type."""
+    return build_full_box("auxC", 0, 0, aux_type.encode("ascii") + b"\x00")
+
+
 def build_tmap(base_headroom: float, alternate_headroom: float) -> bytes:
     """Build tmap (Tone Mapping Info) property box for gainmap metadata.
 
@@ -157,15 +162,16 @@ def build_iinf(items: list[dict]) -> bytes:
         item_type = item.get("type", "hvc1")
         infe_data += item_type.encode("ascii").ljust(4, b"\x00")[:4]
         name = item.get("name", "")
-        name_bytes = name.encode("utf-8") + b"\x00" if name else b""
+        name_bytes = name.encode("utf-8") + b"\x00"
         infe_data += name_bytes
+        if item_type == "mime":
+            content_type = item.get("content_type", "application/octet-stream")
+            infe_data += content_type.encode("ascii") + b"\x00"
+            content_encoding = item.get("content_encoding")
+            if content_encoding:
+                infe_data += content_encoding.encode("ascii") + b"\x00"
 
-        aux_type = item.get("auxC_type")
-        if aux_type:
-            aux_type_bytes = aux_type.encode("ascii") + b"\x00"
-            infe_data += build_box("auxC", aux_type_bytes)
-
-        infe_box = build_full_box("infe", 2, 0, infe_data)
+        infe_box = build_full_box("infe", 2, item.get("flags", 0), infe_data)
 
         data += infe_box
     return build_full_box("iinf", version, 0, data)
@@ -194,6 +200,8 @@ def build_ipco(properties: list[dict]) -> bytes:
                 prop.get("matrix", 1),
                 prop.get("full_range", 1),
             )
+        elif prop_type == "auxC":
+            box = build_auxc(prop["aux_type"])
         elif prop_type == "tmap":
             box = build_tmap(prop.get("base_headroom", 0.0), prop.get("alternate_headroom", 0.0))
         elif prop_type == "pasp":
@@ -222,17 +230,34 @@ def build_ipma(associations: dict[int, list[tuple[int, bool]]]) -> bytes:
     return build_full_box("ipma", version, flags, data)
 
 
+def build_iref(references: list[dict]) -> bytes:
+    """Build iref (Item Reference) box.
+
+    Each reference: {type, from, to: [item_id, ...]}.
+    """
+    data = b""
+    for ref in references:
+        ref_data = struct.pack(">H", ref["from"])
+        to_items = ref.get("to", [])
+        ref_data += struct.pack(">H", len(to_items))
+        for item_id in to_items:
+            ref_data += struct.pack(">H", item_id)
+        data += build_box(ref["type"], ref_data)
+    return build_full_box("iref", 0, 0, data)
+
+
 def build_meta(
     primary_item_id: int,
     iloc_data: bytes,
     iinf_data: bytes,
     iprp_data: bytes,
+    iref_data: bytes = b"",
 ) -> bytes:
     """Build meta box containing hdlr, pitm, iloc, iinf, iprp."""
     hdlr_data = b"\x00\x00\x00\x00" + b"pict" + b"\x00" * 12
     hdlr = build_full_box("hdlr", 0, 0, hdlr_data)
     pitm = build_full_box("pitm", 0, 0, struct.pack(">H", primary_item_id))
-    content = hdlr + pitm + iloc_data + iinf_data + iprp_data
+    content = hdlr + pitm + iloc_data + iinf_data + iref_data + iprp_data
     return build_full_box("meta", 0, 0, content)
 
 
@@ -266,7 +291,7 @@ def _find_box(boxes: list[tuple[str, int, int, bytes]], target_type: str) -> tup
 def _extract_box_payload(box_data: bytes) -> bytes:
     """Extract payload from a box, skipping size+type header (and version/flags for full boxes)."""
     box_type = box_data[4:8].decode("ascii", errors="replace")
-    if box_type in ("meta", "hdlr", "pitm", "iloc", "iinf", "ipma", "tmap"):
+    if box_type in ("meta", "hdlr", "pitm", "iloc", "iinf", "iref", "ipma", "auxC", "tmap"):
         return box_data[12:]
     return box_data[8:]
 
@@ -507,7 +532,9 @@ def encode_and_extract_hevc(
     import pillow_heif
 
     height, width = pixels.shape[:2]
-    if pixels.dtype == np.uint8:
+    if pixels.ndim == 2 and pixels.dtype == np.uint8:
+        mode = "L"
+    elif pixels.dtype == np.uint8:
         mode = "RGB"
     elif pixels.dtype == np.uint16:
         mode = "RGB;16"
@@ -665,6 +692,23 @@ def build_minimal_heic(
     return ftyp + meta + mdat
 
 
+def build_apple_hdr_gainmap_xmp() -> bytes:
+    """Build primary XMP metadata used by Apple HDR gain map readers."""
+    return (
+        b'<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="HDR Transcoder">\n'
+        b'  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
+        b'    <rdf:Description rdf:about=""\n'
+        b'      xmlns:HDRGainMap="http://ns.apple.com/HDRGainMap/1.0/"\n'
+        b'      xmlns:apdi="http://ns.apple.com/pixeldatainfo/1.0/"\n'
+        b'      HDRGainMap:HDRGainMapVersion="65536"\n'
+        b'      apdi:AuxiliaryImageType="urn:com:apple:photo:2020:aux:hdrgainmap"\n'
+        b'      apdi:NativeFormat="1278226488"\n'
+        b'      apdi:StoredFormat="1278226488"/>\n'
+        b'  </rdf:RDF>\n'
+        b'</x:xmpmeta>'
+    )
+
+
 def build_heic_gainmap_container(
     sdr_bitstream: bytes,
     sdr_hvcC: bytes,
@@ -672,12 +716,16 @@ def build_heic_gainmap_container(
     alt_hvcC: bytes,
     gainmap_bitstream: bytes,
     gainmap_hvcC: bytes,
+    apple_gainmap_bitstream: bytes,
+    apple_gainmap_hvcC: bytes,
     sdr_width: int,
     sdr_height: int,
     alt_width: int,
     alt_height: int,
     gainmap_width: int,
     gainmap_height: int,
+    apple_gainmap_width: int,
+    apple_gainmap_height: int,
     base_headroom: float = 0.0,
     alternate_headroom: float = 3.0,
 ) -> bytes:
@@ -687,24 +735,25 @@ def build_heic_gainmap_container(
       1 (primary): SDR base image (8-bit sRGB)
       2: HDR alternate image (10-bit Rec.2020 PQ)
       3: Gain map (8-bit grayscale)
+      4: Apple HDR gain map auxiliary image (8-bit luma)
+      5: Primary XMP metadata signaling HDRGainMapVersion
     """
-    mdat_content = sdr_bitstream + alt_bitstream + gainmap_bitstream
+    xmp_data = build_apple_hdr_gainmap_xmp()
+    mdat_content = sdr_bitstream + alt_bitstream + gainmap_bitstream + apple_gainmap_bitstream + xmp_data
     mdat = build_box("mdat", mdat_content)
 
     sdr_in_mdat = 0
     alt_in_mdat = len(sdr_bitstream)
     gm_in_mdat = alt_in_mdat + len(alt_bitstream)
+    apple_gm_in_mdat = gm_in_mdat + len(gainmap_bitstream)
+    xmp_in_mdat = apple_gm_in_mdat + len(apple_gainmap_bitstream)
 
     iinf = build_iinf([
         {"id": 1, "type": "hvc1", "name": "Primary"},
-        {
-            "id": 2, "type": "hvc1", "name": "Alternate",
-            "auxC_type": "urn:iso:std:iso:ts:21496:-1:aux:alternateImage",
-        },
-        {
-            "id": 3, "type": "hvc1", "name": "GainMap",
-            "auxC_type": "urn:iso:std:iso:ts:21496:-1:aux:gainmap",
-        },
+        {"id": 2, "type": "hvc1", "name": "Alternate"},
+        {"id": 3, "type": "hvc1", "name": "GainMap"},
+        {"id": 4, "type": "hvc1", "name": "AppleHDRGainMap"},
+        {"id": 5, "type": "mime", "name": "", "content_type": "application/rdf+xml", "flags": 1},
     ])
 
     properties = [
@@ -722,14 +771,24 @@ def build_heic_gainmap_container(
         {"type": "pixi", "bits_per_channel": [8, 8, 8]},
         {"type": "colr", "primaries": 1, "transfer": 13, "matrix": 1, "full_range": 1},
         {"type": "tmap", "base_headroom": base_headroom, "alternate_headroom": alternate_headroom},
+        {"type": "hvcC", "data": apple_gainmap_hvcC},
+        {"type": "ispe", "width": apple_gainmap_width, "height": apple_gainmap_height},
+        {"type": "pixi", "bits_per_channel": [8]},
+        {"type": "colr", "primaries": 1, "transfer": 13, "matrix": 1, "full_range": 1},
+        {"type": "auxC", "aux_type": "urn:com:apple:photo:2020:aux:hdrgainmap"},
     ]
     ipco = build_ipco(properties)
     ipma = build_ipma({
         1: [(1, True), (2, False), (3, False), (4, False), (5, False), (14, False)],
         2: [(6, True), (7, False), (8, False), (9, False)],
         3: [(10, True), (11, False), (12, False), (13, False)],
+        4: [(15, True), (16, False), (17, False), (18, False), (19, True)],
     })
     iprp = build_box("iprp", ipco + ipma)
+    iref = build_iref([
+        {"type": "auxl", "from": 4, "to": [1]},
+        {"type": "cdsc", "from": 5, "to": [1]},
+    ])
 
     ftyp = build_ftyp("heic", ["mif1", "heic", "heix"])
 
@@ -741,8 +800,12 @@ def build_heic_gainmap_container(
          "extents": [{"offset": 0, "length": len(alt_bitstream)}]},
         {"id": 3, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
          "extents": [{"offset": 0, "length": len(gainmap_bitstream)}]},
+        {"id": 4, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+         "extents": [{"offset": 0, "length": len(apple_gainmap_bitstream)}]},
+        {"id": 5, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+         "extents": [{"offset": 0, "length": len(xmp_data)}]},
     ])
-    meta_placeholder = build_meta(primary_item_id=1, iloc_data=iloc_placeholder, iinf_data=iinf, iprp_data=iprp)
+    meta_placeholder = build_meta(primary_item_id=1, iloc_data=iloc_placeholder, iinf_data=iinf, iref_data=iref, iprp_data=iprp)
     mdat_payload_start = len(ftyp) + len(meta_placeholder) + 8
 
     # Second pass: rebuild iloc with correct absolute file offsets
@@ -753,7 +816,11 @@ def build_heic_gainmap_container(
          "extents": [{"offset": mdat_payload_start + alt_in_mdat, "length": len(alt_bitstream)}]},
         {"id": 3, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
          "extents": [{"offset": mdat_payload_start + gm_in_mdat, "length": len(gainmap_bitstream)}]},
+        {"id": 4, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+         "extents": [{"offset": mdat_payload_start + apple_gm_in_mdat, "length": len(apple_gainmap_bitstream)}]},
+        {"id": 5, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+         "extents": [{"offset": mdat_payload_start + xmp_in_mdat, "length": len(xmp_data)}]},
     ])
-    meta = build_meta(primary_item_id=1, iloc_data=iloc, iinf_data=iinf, iprp_data=iprp)
+    meta = build_meta(primary_item_id=1, iloc_data=iloc, iinf_data=iinf, iref_data=iref, iprp_data=iprp)
 
     return ftyp + meta + mdat
