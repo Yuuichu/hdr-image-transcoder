@@ -35,26 +35,25 @@ def _srgb_to_linear(srgb: np.ndarray) -> np.ndarray:
 
 
 def _compute_gain_map(sdr_8bit: np.ndarray, hdr_16bit: np.ndarray) -> np.ndarray:
-    """Compute ISO 21496-1 gain map from SDR base and HDR alternate.
+    """Compute an RGB ISO 21496-1 gain map from SDR base and HDR alternate.
 
     Args:
         sdr_8bit: (H, W, 3) uint8 sRGB SDR base
         hdr_16bit: (H, W, 3) uint16 PQ BT.2020 HDR alternate
 
     Returns:
-        (H, W) uint8 gain map
+        (H, W, 3) uint8 gain map
     """
+    from hdr_transcoder.color import clamp_small_negatives, linear_bt2020_to_srgb
+
     sdr_linear = _srgb_to_linear(sdr_8bit)
 
     hdr_float = hdr_16bit.astype(np.float32) / 65535.0
     hdr_linear = _pq_to_linear(hdr_float, max_nits=10000.0)
-    hdr_linear = hdr_linear / 100.0
-
-    sdr_lum = 0.2126 * sdr_linear[..., 0] + 0.7152 * sdr_linear[..., 1] + 0.0722 * sdr_linear[..., 2]
-    hdr_lum = 0.2627 * hdr_linear[..., 0] + 0.6780 * hdr_linear[..., 1] + 0.0593 * hdr_linear[..., 2]
+    hdr_linear = clamp_small_negatives(linear_bt2020_to_srgb(hdr_linear / 100.0))
 
     eps = 1e-8
-    ratio = np.maximum(hdr_lum, eps) / np.maximum(sdr_lum, eps)
+    ratio = np.maximum(hdr_linear, eps) / np.maximum(sdr_linear, eps)
     gain_log = np.log2(np.maximum(ratio, eps))
 
     log_min = -8.0
@@ -62,8 +61,7 @@ def _compute_gain_map(sdr_8bit: np.ndarray, hdr_16bit: np.ndarray) -> np.ndarray
     gain_norm = (gain_log - log_min) / (log_max - log_min)
     gain_norm = np.clip(gain_norm, 0.0, 1.0)
 
-    gain_8bit = (gain_norm * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
-    return gain_8bit
+    return (gain_norm * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
 
 
 def _pq_to_linear(pq_values: np.ndarray, max_nits: float = 10000.0) -> np.ndarray:

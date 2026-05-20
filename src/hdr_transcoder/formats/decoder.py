@@ -519,18 +519,19 @@ def _decode_gainmap_heif(raw):
     gm_float = _to_float32(gm_pixels)
 
     if gm_float.ndim == 3 and gm_float.shape[2] >= 3:
-        gm_channel = gm_float[..., 0]
+        gm_values = gm_float[..., :3]
     elif gm_float.ndim == 3 and gm_float.shape[2] == 1:
-        gm_channel = gm_float[..., 0]
+        gm_values = gm_float[..., 0]
     else:
-        gm_channel = gm_float
+        gm_values = gm_float
 
-    if gm_channel.shape[:2] != sdr_float.shape[:2]:
-        gm_channel = np.resize(gm_channel, sdr_float.shape[:2])
+    if gm_values.shape[:2] != sdr_float.shape[:2]:
+        target_shape = sdr_float.shape[:2] if gm_values.ndim == 2 else (*sdr_float.shape[:2], gm_values.shape[2])
+        gm_values = np.resize(gm_values, target_shape)
 
     sdr_linear = _srgb_to_linear(sdr_float[..., :3])
 
-    gain_log = gm_channel * 16.0 - 8.0
+    gain_log = gm_values * 16.0 - 8.0
     gain = np.power(2.0, gain_log)
     gain = np.expand_dims(gain, axis=-1) if gain.ndim == 2 else gain
     hdr_rgb = sdr_linear * gain

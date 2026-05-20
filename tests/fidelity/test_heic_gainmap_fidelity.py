@@ -170,6 +170,43 @@ def test_cli_pq_tiff_to_gainmap_heic(tmp_path):
 
 
 @pytest.mark.fidelity
+@pytest.mark.tools
+def test_gainmap_heic_preserves_rgb_highlight_peak(tmp_path):
+    """Preserve bright non-neutral PQ highlights through HEIC gainmap reconstruction."""
+    import imagecodecs
+
+    h, w = 24, 24
+    linear_nits = np.full((h, w, 3), 35.0, dtype=np.float32)
+    linear_nits[8:16, 8:16, :] = [883.0, 751.0, 706.0]
+    pq_16bit = _pq_encode_16bit(linear_nits, max_nits=10000.0)
+    tiff_raw = _make_pq_tiff(pq_16bit)
+
+    input_path = tmp_path / "source_rgb_peak.tif"
+    input_path.write_bytes(tiff_raw)
+    output_path = tmp_path / "output.heic"
+
+    run_python(
+        [
+            "hdr2avif.py",
+            input_path,
+            output_path,
+            "--pq-input",
+            "--format", "gainmap-heic",
+            "--fidelity", "compat",
+            "--speed", "8",
+            "--verify-fidelity",
+        ],
+        timeout=300,
+    )
+
+    source_pixels, _, _ = decode_to_scrgb(str(input_path), pq_input=True)
+    output_pixels, _, _ = decode_to_scrgb(str(output_path))
+    source_peak = float(source_pixels[..., :3].max())
+    output_peak = float(output_pixels[..., :3].max())
+    assert stop_delta(source_peak, output_peak) <= 0.05
+
+
+@pytest.mark.fidelity
 def test_gainmap_heic_info_json(tmp_path):
     """Verify --info-json works for gainmap-heic output."""
     import imagecodecs

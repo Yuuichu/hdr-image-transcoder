@@ -518,10 +518,13 @@ def encode_and_extract_hevc(
     heif_file.add_frombytes(mode, (width, height), pixels.tobytes())
     with tempfile.NamedTemporaryFile(suffix=".heic", delete=False) as f:
         temp_path = f.name
+    # pillow_heif uses -1 for lossless; quality=100 is the CLI default and
+    # must preserve HDR peak fidelity for gainmap HEIC outputs.
+    heif_quality = -1 if quality >= 100 else quality
     try:
         heif_file.save(
             temp_path,
-            quality=quality,
+            quality=heif_quality,
             chroma=chroma,
             save_nclx_profile=True,
             color_primaries=color_primaries,
