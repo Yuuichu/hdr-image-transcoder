@@ -421,23 +421,9 @@ def _decode_heif_with_pillow(raw):
 
     heif_file = pillow_heif.open_heif(BytesIO(raw), convert_hdr_to_8bit=False)
     image = heif_file[0]
-    width, height = image.size
-    mode = image.mode
+    pixels = _extract_pillow_heif_pixels(image)
 
-    if mode.endswith(";16"):
-        base_mode = mode[:-3]
-        dtype = np.uint16
-        bytes_per_sample = 2
-    else:
-        base_mode = mode
-        dtype = np.uint8
-        bytes_per_sample = 1
-
-    channels = len(base_mode)
-    row_values = image.stride // bytes_per_sample
-    row_pixels = np.frombuffer(image.data, dtype=dtype).reshape(height, row_values)
-    pixels = row_pixels[:, :width * channels].reshape(height, width, channels)
-
+    dtype = np.uint16 if image.mode.endswith(";16") else np.uint8
     nclx = image.info.get("nclx_profile") or {}
     if nclx.get("transfer_characteristics") == CICP_PQ_TRANSFER:
         info = np.iinfo(dtype)
@@ -452,7 +438,131 @@ def _decode_heif_with_pillow(raw):
     return _to_float32(pixels)
 
 
+def _srgb_to_linear(srgb_pixels):
+    """Convert sRGB gamma-encoded values to linear light."""
+    srgb = np.asarray(srgb_pixels, dtype=np.float32)
+    linear = np.where(srgb <= 0.04045, srgb / 12.92, ((srgb + 0.055) / 1.055) ** 2.4)
+    return linear
+
+
+def _decode_gainmap_heif(raw):
+    """Decode an ISO 21496-1 gainmap HEIC by applying the gainmap to the SDR base."""
+    from hdr_transcoder.formats.isobmff import (
+        build_minimal_heic,
+        find_item_property,
+        get_item_bitdepth,
+        get_item_colr,
+        get_item_dimensions,
+        read_heic_container,
+        read_heic_gainmap_metadata_from_container,
+    )
+
+    container = read_heic_container(raw)
+    if container is None:
+        return None
+
+    metadata = read_heic_gainmap_metadata_from_container(container)
+    if metadata is None:
+        return None
+
+    alternate_headroom = metadata["alternateHeadroom"]
+    if alternate_headroom <= 0:
+        _warn(f"Gainmap HEIC alternate headroom must be > 0, got {alternate_headroom}")
+        return None
+
+    item_extents = container["item_extents"]
+    if 1 not in item_extents or 3 not in item_extents:
+        _warn("Gainmap HEIC missing item 1 (SDR base) or item 3 (gainmap)")
+        return None
+
+    sdr_hvcC = find_item_property(container, 1, "hvcC")
+    gm_hvcC = find_item_property(container, 3, "hvcC")
+    if sdr_hvcC is None or gm_hvcC is None:
+        _warn("Gainmap HEIC missing hvcC for SDR base or gainmap")
+        return None
+
+    sdr_width, sdr_height = get_item_dimensions(container, 1)
+    gm_width, gm_height = get_item_dimensions(container, 3)
+    if sdr_width is None or gm_width is None:
+        _warn("Gainmap HEIC missing ispe for SDR base or gainmap")
+        return None
+
+    sdr_bpc = get_item_bitdepth(container, 1)
+    gm_bpc = get_item_bitdepth(container, 3)
+    sdr_primaries, sdr_transfer, sdr_matrix = get_item_colr(container, 1)
+
+    sdr_offset, sdr_length = item_extents[1][0]
+    gm_offset, gm_length = item_extents[3][0]
+    sdr_bitstream = raw[sdr_offset:sdr_offset + sdr_length]
+    gm_bitstream = raw[gm_offset:gm_offset + gm_length]
+
+    import pillow_heif
+
+    sdr_heic = build_minimal_heic(
+        sdr_hvcC, sdr_bitstream, sdr_width, sdr_height,
+        primaries=sdr_primaries, transfer=sdr_transfer, matrix=sdr_matrix,
+        bits_per_channel=sdr_bpc,
+    )
+    heif_file = pillow_heif.open_heif(BytesIO(sdr_heic), convert_hdr_to_8bit=False)
+    sdr_image = heif_file[0]
+    sdr_pixels = _extract_pillow_heif_pixels(sdr_image)
+    sdr_float = _to_float32(sdr_pixels)
+
+    gm_heic = build_minimal_heic(
+        gm_hvcC, gm_bitstream, gm_width, gm_height,
+        primaries=1, transfer=13, matrix=1,
+        bits_per_channel=gm_bpc,
+    )
+    heif_file = pillow_heif.open_heif(BytesIO(gm_heic), convert_hdr_to_8bit=False)
+    gm_image = heif_file[0]
+    gm_pixels = _extract_pillow_heif_pixels(gm_image)
+    gm_float = _to_float32(gm_pixels)
+
+    if gm_float.ndim == 3 and gm_float.shape[2] >= 3:
+        gm_channel = gm_float[..., 0]
+    elif gm_float.ndim == 3 and gm_float.shape[2] == 1:
+        gm_channel = gm_float[..., 0]
+    else:
+        gm_channel = gm_float
+
+    if gm_channel.shape[:2] != sdr_float.shape[:2]:
+        gm_channel = np.resize(gm_channel, sdr_float.shape[:2])
+
+    sdr_linear = _srgb_to_linear(sdr_float[..., :3])
+
+    gain_log = gm_channel * 16.0 - 8.0
+    gain = np.power(2.0, gain_log)
+    gain = np.expand_dims(gain, axis=-1) if gain.ndim == 2 else gain
+    hdr_rgb = sdr_linear * gain
+    hdr_rgba = np.zeros((*hdr_rgb.shape[:2], 4), dtype=np.float32)
+    hdr_rgba[..., :3] = hdr_rgb
+    hdr_rgba[..., 3] = 1.0
+
+    return hdr_rgba
+
+
+def _extract_pillow_heif_pixels(image):
+    """Extract numpy pixel array from a pillow_heif Image object."""
+    width, height = image.size
+    mode = image.mode
+    if mode.endswith(";16"):
+        base_mode = mode[:-3]
+        dtype = np.uint16
+        bytes_per_sample = 2
+    else:
+        base_mode = mode
+        dtype = np.uint8
+        bytes_per_sample = 1
+    channels = len(base_mode)
+    row_values = image.stride // bytes_per_sample
+    row_pixels = np.frombuffer(image.data, dtype=dtype).reshape(height, row_values)
+    return row_pixels[:, :width * channels].reshape(height, width, channels)
+
+
 def _decode_heif(raw):
+    gainmap_result = _decode_gainmap_heif(raw)
+    if gainmap_result is not None:
+        return gainmap_result
     try:
         return _decode_heif_with_pillow(raw)
     except UnsafeMetadataError:
@@ -499,10 +609,105 @@ def _decode_png(raw):
     return _to_float32(imagecodecs.png_decode(raw))
 
 
-def _decode_tiff(raw):
+def _read_tiff_cicp(raw):
+    """Extract CICP-like color metadata from TIFF IFD/EXIF tags.
+
+    Returns a dict with keys primaries, transfer, matrix (all int or None).
+    Returns empty dict if no recognizable CICP metadata is found.
+    """
+    import struct
+
+    if len(raw) < 8:
+        return {}
+
+    byte_order = raw[:2]
+    if byte_order == b"II":
+        endian = "<"
+    elif byte_order == b"MM":
+        endian = ">"
+    else:
+        return {}
+
+    magic = struct.unpack(f"{endian}H", raw[2:4])[0]
+    if magic not in (42, 0x2A):
+        return {}
+
+    ifd_offset = struct.unpack(f"{endian}I", raw[4:8])[0]
+    if ifd_offset <= 0 or ifd_offset + 2 > len(raw):
+        return {}
+
+    result = {}
+
+    for _ in range(8):
+        if ifd_offset + 2 > len(raw):
+            break
+        num_entries = struct.unpack(f"{endian}H", raw[ifd_offset:ifd_offset + 2])[0]
+        entry_base = ifd_offset + 2
+        entry_end = entry_base + num_entries * 12
+        if entry_end > len(raw):
+            break
+
+        for i in range(num_entries):
+            pos = entry_base + i * 12
+            if pos + 12 > len(raw):
+                break
+            tag, dtype, count, value_or_offset = struct.unpack(
+                f"{endian}HHII", raw[pos:pos + 12]
+            )
+
+            if tag == 0xC761:
+                byte_count = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 11: 4}.get(dtype, 1) * count
+                if byte_count <= 4:
+                    value_bytes = raw[pos + 8:pos + 8 + byte_count]
+                else:
+                    vo = value_or_offset
+                    if vo + byte_count <= len(raw):
+                        value_bytes = raw[vo:vo + byte_count]
+                    else:
+                        value_bytes = b""
+                if value_bytes:
+                    try:
+                        text = value_bytes.decode("ascii", errors="ignore")
+                    except Exception:
+                        text = ""
+                    for match in re.finditer(
+                        r"Transfer\s*Char(?:acteristics)?\s*[:=]?\s*(\d+)",
+                        text, re.IGNORECASE,
+                    ):
+                        result["transfer"] = int(match.group(1))
+                    for match in re.finditer(
+                        r"Color\s*Primaries\s*[:=]?\s*(\d+)",
+                        text, re.IGNORECASE,
+                    ):
+                        result["primaries"] = int(match.group(1))
+                    for match in re.finditer(
+                        r"Matrix\s*Coeff(?:icient)?s?\s*[:=]?\s*(\d+)",
+                        text, re.IGNORECASE,
+                    ):
+                        result["matrix"] = int(match.group(1))
+
+        next_offset_field = entry_end
+        if next_offset_field + 4 > len(raw):
+            break
+        next_offset = struct.unpack(f"{endian}I", raw[next_offset_field:next_offset_field + 4])[0]
+        if next_offset <= 0:
+            break
+        ifd_offset = next_offset
+
+    return result
+
+
+def _decode_tiff(raw, pq_input=False):
     import imagecodecs
 
-    return _to_float32(imagecodecs.tiff_decode(raw), preserve_negative=True)
+    cicp = _read_tiff_cicp(raw)
+    pixels = imagecodecs.tiff_decode(raw)
+
+    if cicp.get("transfer") == CICP_PQ_TRANSFER or pq_input:
+        pq_norm = _normalize_pq_pixels(pixels)
+        return _decode_pq(pq_norm, primaries=cicp.get("primaries"))
+
+    return _to_float32(pixels, preserve_negative=True)
 
 
 def _decode_wic(raw):
@@ -524,7 +729,7 @@ _DECODERS = {
 }
 
 
-def decode_to_scrgb(filepath):
+def decode_to_scrgb(filepath, pq_input=False):
     """Decode a supported image to float32 linear RGBA data."""
     path = Path(filepath)
     fmt = probe_format(filepath)
@@ -537,7 +742,10 @@ def decode_to_scrgb(filepath):
 
     if decoder is not None:
         try:
-            pixels = _ensure_rgba(decoder(raw))
+            try:
+                pixels = _ensure_rgba(decoder(raw, pq_input=pq_input))
+            except TypeError:
+                pixels = _ensure_rgba(decoder(raw))
             height, width = pixels.shape[:2]
             return pixels, width, height
         except UnsafeMetadataError as primary_error:

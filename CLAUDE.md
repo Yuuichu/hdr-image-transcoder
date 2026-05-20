@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file gives local guidance for working in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
@@ -73,16 +73,94 @@ pip install -r requirements.txt
 
 ## Architecture
 
+The core logic lives in the `src/hdr_transcoder` package. The old flat `src/`
+modules (`cli.py`, `decoder.py`, `encoder.py`, `gainmap.py`, `processor.py`) are
+now thin compatibility wrappers that re-export from `hdr_transcoder.*`.
+
 ```text
-src/
-  cli.py          -> CLI orchestration (convert_single, main)
-  decoder.py      -> Multi-format decoder (decode_to_scrgb)
-  encoder.py      -> Multi-format encoder (encode_output)
-  gainmap.py      -> Gainmap AVIF encoder (avifgainmaputil_hdr)
-  processor.py    -> HDR processing (prepare_base_sdr, prepare_alternate_hdr)
-hdr2avif.py       -> thin CLI entry: from src.cli import main
-jxr2avif.py       -> backward-compatible wrapper for hdr2avif.main()
+src/hdr_transcoder/
+  config.py         -> Central constants, CICP codes, paths, timeouts
+  color.py          -> Color-space matrices (sRGB↔BT.2020, gamma helpers)
+  processor.py      -> SDR tone-mapping (prepare_base_sdr), PQ encoding (prepare_alternate_hdr)
+  validation.py     -> Fidelity verification (peak/headroom checks, metadata validation)
+  inspector.py      -> Image inspection, debug overlay generation, info JSON
+  tools.py          -> Bundled tool paths, runtime environment checks
+  tools_check.py    -> CLI entry for `python -m hdr_transcoder.tools_check`
+  cli.py            -> CLI orchestration (convert_single, main, arg parsing)
+  formats/
+    __init__.py     -> Encoder dispatch (encode_output), format registry
+    decoder.py      -> Multi-format decoder (decode_to_scrgb, probe_format)
+    gainmap.py      -> Gainmap AVIF (avifgainmaputil_hdr.exe)
+    jxl.py          -> JPEG XL (cjxl.exe), JXL_MODE_* constants
+    avif.py         -> Standard AVIF HDR (imagecodecs)
+    ultrahdr.py     -> Ultra HDR JPEG (imagecodecs)
+    heif.py         -> HEIF HDR (pillow-heif)
+hdr2avif.py         -> CLI entry: from hdr_transcoder.cli import main
+jxr2avif.py         -> backward-compatible wrapper for hdr2avif.main()
 ```
+
+### Data flow
+
+```
+Input → decoder.decode_to_scrgb() → float32 scRGB (H×W×3)
+  ├─ Tier-1 formats (jxl/avif/heif/ultrahdr) → encoder.encode_output()
+  └─ Gainmap AVIF → processor.prepare_base_sdr() + prepare_alternate_hdr()
+                    → gainmap.encode_gainmap_avif()
+```
+
+### Fidelity model
+
+| Mode | Default format | Description |
+|------|---------------|-------------|
+| `master` | lossless linear JXL | Archive/reprocessing (requires `--jxl-mode linear-srgb`) |
+| `display` | Rec.2020 PQ JXL | Viewable HDR delivery |
+| `compat` | Gainmap AVIF | Web-compatible with SDR fallback |
+
+`--fidelity master` is the default. Non-JXL outputs under master require
+`--allow-non-master`. Tier-1 formats (jxl, avif, heif, ultrahdr) are encoded
+directly from scRGB; gainmap AVIF goes through the two-pass SDR+HDR pipeline.
+
+### Bundled tools
+
+Encode/decode relies on prebuilt executables in `tools/`:
+
+- `tools/libjxl/` — cjxl.exe, djxl.exe, jxlinfo.exe (JPEG XL)
+- `tools/libavif/` — avifgainmaputil.exe, avifgainmaputil_hdr.exe, avifdec.exe,
+  avifenc.exe (AVIF)
+
+These are required at runtime. `python -m hdr_transcoder.tools_check` reports
+missing tools and dependency errors. `hdr_transcoder.tools` maps tool names to
+absolute paths.
+
+## Testing
+
+```powershell
+# Run quick tests (default — skips fidelity tests).
+pytest
+
+# Run all tests including slower end-to-end fidelity tests.
+pytest -m ""
+
+# Run only fidelity tests.
+pytest -m fidelity
+
+# Run a specific test file.
+pytest tests/unit/test_tools_check.py
+
+# Run tool invocation checks.
+python -m hdr_transcoder.tools_check --invoke
+```
+
+Test markers (defined in pytest.ini):
+
+| Marker | Description |
+|--------|-------------|
+| `quick` (default) | Fast tests, no full encode/decode round-trips |
+| `fidelity` | Slower end-to-end tests that encode and decode output images |
+| `tools` | Tests that require bundled command-line tools |
+| `gui` | Electron renderer/main-process wiring checks |
+
+Test fixtures live in `tests/fixtures/` (test JXL files, HEIF reference).
 
 ## Notes
 

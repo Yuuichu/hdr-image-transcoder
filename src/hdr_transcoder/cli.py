@@ -22,7 +22,7 @@ from hdr_transcoder.config import (
     MASTER_FORMAT,
     TIER1_FORMATS,
 )
-from hdr_transcoder.formats.gainmap import encode_gainmap_avif
+from hdr_transcoder.formats.gainmap import encode_gainmap_avif, encode_gainmap_heic
 from hdr_transcoder.formats.decoder import SUPPORTED_FORMATS, decode_to_scrgb, probe_format
 from hdr_transcoder.formats import (
     EXTENSION_TO_FORMAT,
@@ -203,7 +203,8 @@ def convert_single(input_path, output_path, quality=100, speed=0, max_headroom=N
                    jxl_mode=None, fidelity=FIDELITY_MASTER,
                    allow_non_master=False, verify_fidelity=False,
                    gainmap_headroom_mode=GAINMAP_HEADROOM_SOURCE_PEAK,
-                   debug_overlay=False, info_json=False):
+                   debug_overlay=False, info_json=False,
+                   pq_input=False):
     """Convert a single HDR image to the specified output format."""
     input_path = Path(input_path)
     output_path = Path(output_path)
@@ -219,7 +220,7 @@ def convert_single(input_path, output_path, quality=100, speed=0, max_headroom=N
     fmt_name = SUPPORTED_FORMATS.get(fmt, (fmt or "unknown", []))[0]
 
     print(f"Decoding: {input_path.name} [{fmt_name}]")
-    hdr, width, height = decode_to_scrgb(str(input_path))
+    hdr, width, height = decode_to_scrgb(str(input_path), pq_input=pq_input)
     _ensure_finite_hdr(hdr, input_path)
     rgb_max = hdr[..., :3].max()
     print(f"  Resolution: {width}x{height}, HDR peak: {rgb_max:.3f}")
@@ -252,11 +253,17 @@ def convert_single(input_path, output_path, quality=100, speed=0, max_headroom=N
             headroom_label = f"source-peak alternate_headroom={alternate_headroom:.3f}"
         else:
             headroom_label = "auto metadata"
+        if output_format == "gainmap-heic":
+            label = "Gainmap HEIC"
+            encoder = encode_gainmap_heic
+        else:
+            label = "Gainmap AVIF"
+            encoder = encode_gainmap_avif
         print(
-            f"  Encoding Gainmap AVIF "
+            f"  Encoding {label} "
             f"(quality={quality}, speed={speed}, headroom_mode={headroom_label})..."
         )
-        encode_gainmap_avif(
+        encoder(
             sdr,
             alt,
             str(output_path),
@@ -342,8 +349,8 @@ def main():
                         help="Gainmap AVIF metadata mode: source-peak writes source peak headroom; auto keeps libavif metadata")
     parser.add_argument("--headroom", type=float, default=2.0,
                         help="SDR base headroom in stops, default 2.0 (gainmap/Ultra HDR)")
-    parser.add_argument("--format", "-f", choices=["gainmap", "jxl", "avif", "ultrahdr", "heif"],
-                        help="Output format: gainmap, jxl, avif (standard HDR), ultrahdr, heif")
+    parser.add_argument("--format", "-f", choices=["gainmap", "gainmap-heic", "jxl", "avif", "ultrahdr", "heif"],
+                        help="Output format: gainmap (AVIF), gainmap-heic, jxl, avif (standard HDR), ultrahdr, heif")
     parser.add_argument("--lossless", action="store_true",
                         help="Lossless encoding (JXL only)")
     parser.add_argument("--jxl-mode", choices=sorted(JXL_MODES), default=None,
@@ -358,6 +365,8 @@ def main():
                         help="Create a sidecar SDR PNG with output image debug information overlaid")
     parser.add_argument("--info-json", action="store_true",
                         help="Write a sidecar output.info.json file with inspector and verify metadata")
+    parser.add_argument("--pq-input", action="store_true",
+                        help="Treat TIFF input as PQ HDR (when CICP metadata is absent)")
     parser.add_argument("--name-prefix", default="",
                         help="Prefix added to batch output filenames")
     parser.add_argument("--name-suffix", default="",
@@ -399,6 +408,9 @@ def main():
             if key == "ultrahdr":
                 strategy = "Compat"
                 best = "max compatibility"
+            elif key == "gainmap-heic":
+                strategy = "Compat"
+                best = "Apple ecosystem, HEIF gainmap"
             elif key == "jxl":
                 strategy = "Display"
                 best = "HDR display/archive"
@@ -457,6 +469,7 @@ def main():
                     gainmap_headroom_mode=args.gainmap_headroom_mode,
                     debug_overlay=args.debug_overlay,
                     info_json=args.info_json,
+                    pq_input=args.pq_input,
                 )
             except Exception as exc:
                 print(f"  ERROR: {exc}")
@@ -511,6 +524,7 @@ def main():
                     gainmap_headroom_mode=args.gainmap_headroom_mode,
                     debug_overlay=args.debug_overlay,
                     info_json=args.info_json,
+                    pq_input=args.pq_input,
                 )
             except Exception as exc:
                 print(f"  ERROR: {exc}")

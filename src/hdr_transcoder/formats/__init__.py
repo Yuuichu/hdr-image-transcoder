@@ -2,6 +2,7 @@
 from pathlib import Path
 
 from hdr_transcoder.formats.avif import encode_avif_hdr
+from hdr_transcoder.formats.gainmap import encode_gainmap_avif, encode_gainmap_heic
 from hdr_transcoder.formats.heif import encode_heif_hdr
 from hdr_transcoder.formats.jxl import (
     JXL_MODE_LINEAR_SRGB,
@@ -17,6 +18,7 @@ OUTPUT_FORMATS = {
     "avif": ("Standard AVIF HDR", [".avif"]),
     "ultrahdr": ("Ultra HDR JPEG", [".jpg", ".jpeg"]),
     "heif": ("HEIF HDR", [".heic", ".heif"]),
+    "gainmap-heic": ("Gainmap HEIC", [".heic"]),
 }
 
 EXTENSION_TO_FORMAT = {

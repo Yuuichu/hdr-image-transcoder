@@ -7,6 +7,7 @@ PROJECT_ROOT = SRC_DIR.parent
 TOOLS_DIR = PROJECT_ROOT / "tools"
 LIBAVIF_DIR = TOOLS_DIR / "libavif"
 LIBJXL_DIR = TOOLS_DIR / "libjxl"
+LIBHEIF_DIR = TOOLS_DIR / "libheif"
 
 CICP_BT709_PRIMARIES = 1
 CICP_BT709_MATRIX = 1
@@ -37,7 +38,7 @@ INPUT_EXTENSIONS = {
 }
 
 TIER1_FORMATS = {"jxl", "ultrahdr", "avif", "heif"}
-ALL_OUTPUT_FORMATS = {*TIER1_FORMATS, "gainmap"}
+ALL_OUTPUT_FORMATS = {*TIER1_FORMATS, "gainmap", "gainmap-heic"}
 
 GAINMAP_HEADROOM_SOURCE_PEAK = "source-peak"
 GAINMAP_HEADROOM_AUTO = "auto"
@@ -55,6 +56,7 @@ FORMAT_EXTENSIONS = {
     "avif": ".avif",
     "heif": ".heic",
     "gainmap": ".avif",
+    "gainmap-heic": ".heic",
 }
 
 DEFAULT_NAME_PATTERN = "{name}"

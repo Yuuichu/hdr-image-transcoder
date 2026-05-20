@@ -113,6 +113,41 @@ def _inspect_avif_gainmap(path):
     return info
 
 
+def _inspect_heif_gainmap(path):
+    """Read tmap box and alternate colr from a gainmap HEIC via ISOBMFF parsing."""
+    from hdr_transcoder.formats.isobmff import (
+        read_heic_container,
+        read_heic_gainmap_alternate_cicp_from_container,
+        read_heic_gainmap_metadata_from_container,
+    )
+
+    info = {"present": False}
+    try:
+        container = read_heic_container(path)
+        if container is None:
+            return info
+        metadata = read_heic_gainmap_metadata_from_container(container)
+        if metadata is None:
+            return info
+        info.update(metadata)
+        info["present"] = True
+
+        cicp = read_heic_gainmap_alternate_cicp_from_container(container)
+        if cicp:
+            info["alternate_color"] = {
+                "primaries": cicp["primaries"],
+                "transfer": cicp["transfer"],
+                "matrix": cicp["matrix"],
+                "primaries_label": _label(PRIMARIES_LABELS, cicp["primaries"]),
+                "transfer_label": _label(TRANSFER_LABELS, cicp["transfer"]),
+                "matrix_label": _label(MATRIX_LABELS, cicp["matrix"]),
+                "source": "heif isobmff colr nclx",
+            }
+    except Exception:
+        return {"present": False}
+    return info
+
+
 def _inspect_avif_alternate_color(path, warnings):
     if not AVIFDEC.exists():
         warnings.append(f"Missing avifdec.exe: {AVIFDEC}")
@@ -259,6 +294,8 @@ def inspect_image(path):
         alternate_color = _inspect_avif_alternate_color(path, warnings)
         if alternate_color:
             result["gainmap"]["alternate_color"] = alternate_color
+    if fmt == "heif":
+        result["gainmap"] = _inspect_heif_gainmap(path)
 
     try:
         pixels, width, height = decode_to_scrgb(str(path))

@@ -3,6 +3,7 @@ AVIF gainmap encoder using libavif's avifgainmaputil.
 
 Combines SDR base + HDR alternate into a gainmap AVIF.
 """
+import os
 import subprocess
 import sys
 import tempfile
@@ -17,7 +18,7 @@ from hdr_transcoder.color import (
     CICP_SRGB_TRANSFER,
 )
 from hdr_transcoder.config import GAINMAP_ENCODE_TIMEOUT_SECONDS
-from hdr_transcoder.tools import AVIFGAINMAPUTIL, AVIFGAINMAPUTIL_HDR
+from hdr_transcoder.tools import AVIFGAINMAPUTIL, AVIFGAINMAPUTIL_HDR, HEIFGAINMAPUTIL_HDR
 
 
 def encode_gainmap_avif(
@@ -107,6 +108,101 @@ def encode_gainmap_avif(
                 detail += f"\nSTDOUT:\n{indent(result.stdout.strip(), '  ')}"
             raise RuntimeError(
                 f"avifgainmaputil_hdr exited with code {result.returncode}{detail}"
+            )
+
+    return output_path
+
+
+def encode_gainmap_heic(
+    sdr_8bit,
+    hdr_16bit,
+    output_path,
+    quality=100,
+    speed=0,
+    max_headroom=None,
+    base_headroom=None,
+    alternate_headroom=None,
+):
+    """Encode SDR base + HDR alternate to gainmap HEIC (ISO 21496-1).
+
+    Args:
+        sdr_8bit: ndarray (H, W, 3) uint8, sRGB SDR base
+        hdr_16bit: ndarray (H, W, 3) uint16, PQ-encoded Rec.2020 HDR alternate
+        output_path: str or Path, output HEIC file path
+        quality: 0-100, encoding quality (default 100)
+        speed: 0-10, encoder speed (default 0)
+        max_headroom: optional legacy headroom cap (ignored for now)
+        base_headroom: optional log2 base headroom metadata override
+        alternate_headroom: optional log2 alternate headroom metadata override
+
+    Returns:
+        Path to the output HEIC file
+    """
+    import imagecodecs
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not HEIFGAINMAPUTIL_HDR.exists():
+        raise FileNotFoundError(
+            f"Missing HEIC gain map tool: {HEIFGAINMAPUTIL_HDR}. "
+            "Gainmap HEIC encoding requires heifgainmaputil_hdr.py."
+        )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        base_png = tmp / "base.png"
+        alternate_png = tmp / "alternate.png"
+
+        base_png.write_bytes(imagecodecs.png_encode(sdr_8bit))
+        alternate_png.write_bytes(imagecodecs.png_encode(hdr_16bit))
+
+        cmd = [
+            sys.executable, str(HEIFGAINMAPUTIL_HDR), "combine",
+            str(base_png),
+            str(alternate_png),
+            str(output_path),
+            "--qcolor", str(quality),
+            "--qgain-map", str(quality),
+            "--speed", str(speed),
+            "--cicp-base", f"{CICP_BT709_PRIMARIES}/{CICP_SRGB_TRANSFER}/{CICP_BT709_MATRIX}",
+            "--cicp-alternate", f"{CICP_BT2020_PRIMARIES}/{CICP_PQ_TRANSFER}/{CICP_BT2020_MATRIX}",
+        ]
+        if max_headroom is not None:
+            cmd.extend(["--max-headroom", str(max_headroom)])
+        if base_headroom is not None:
+            cmd.extend(["--base-headroom", str(base_headroom)])
+        if alternate_headroom is not None:
+            cmd.extend(["--alternate-headroom", str(alternate_headroom)])
+        project_root = str(HEIFGAINMAPUTIL_HDR.parents[2])
+        env = os.environ.copy()
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = project_root if not existing_pythonpath else f"{project_root}{os.pathsep}{existing_pythonpath}"
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=GAINMAP_ENCODE_TIMEOUT_SECONDS,
+                env=env,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError(
+                f"heifgainmaputil_hdr combine timed out after {GAINMAP_ENCODE_TIMEOUT_SECONDS}s"
+            ) from exc
+        if result.stderr and result.stderr.strip():
+            from textwrap import indent
+            print(f"heifgainmaputil_hdr stderr:\n{indent(result.stderr.strip(), '  ')}", file=sys.stderr)
+        if result.returncode != 0:
+            from textwrap import indent
+            detail = ""
+            if result.stderr:
+                detail = f"\nSTDERR:\n{indent(result.stderr.strip(), '  ')}"
+            if result.stdout:
+                detail += f"\nSTDOUT:\n{indent(result.stdout.strip(), '  ')}"
+            raise RuntimeError(
+                f"heifgainmaputil_hdr exited with code {result.returncode}{detail}"
             )
 
     return output_path

@@ -139,6 +139,71 @@ def _read_gainmap_alternate_cicp(output_path):
     return cicp
 
 
+def _read_heic_gainmap_metadata(output_path):
+    """Parse tmap box from gainmap HEIC to get base/alternate headroom."""
+    from hdr_transcoder.formats.isobmff import read_heic_container, read_heic_gainmap_metadata_from_container
+
+    container = read_heic_container(output_path)
+    if container is None:
+        raise ValueError("Fidelity verify failed: HEIC missing gain map metadata container")
+    metadata = read_heic_gainmap_metadata_from_container(container)
+    if metadata is None:
+        raise ValueError("Fidelity verify failed: gain map tmap box missing")
+    return metadata
+
+
+def _read_heic_gainmap_alternate_cicp(output_path):
+    """Extract CICP from alternate image's colr nclx box in a gainmap HEIC."""
+    from hdr_transcoder.formats.isobmff import read_heic_gainmap_alternate_cicp
+
+    cicp = read_heic_gainmap_alternate_cicp(output_path)
+    if cicp is None:
+        raise ValueError("Fidelity verify failed: alternate image colr with PQ transfer not found in HEIC")
+    return cicp
+
+
+def verify_heic_gainmap_headroom(source_pixels, output_path, tolerance_stops=GAINMAP_HEADROOM_TOLERANCE_STOPS):
+    required = source_peak_headroom(source_pixels)
+    metadata = _read_heic_gainmap_metadata(output_path)
+    alternate = metadata.get("alternateHeadroom")
+    if alternate is None:
+        raise ValueError("Fidelity verify failed: HEIC gain map alternate headroom missing")
+
+    delta = required - alternate
+    if delta > tolerance_stops:
+        raise ValueError(
+            "Fidelity verify failed: HEIC gain map alternate headroom below source peak "
+            f"source_peak_headroom={required:.4f} stops, "
+            f"actual_headroom={alternate:.4f} stops, "
+            f"delta={delta:.4f} stops, tolerance={tolerance_stops:.4f} stops"
+        )
+    print(
+        "  Fidelity verify: HEIC gain map alternate headroom "
+        f"{alternate:.4f} stops (source {required:.4f}, delta {max(delta, 0.0):.4f}, "
+        f"tolerance {tolerance_stops:.4f})"
+    )
+    return {
+        "sourcePeakHeadroom": required,
+        "actualHeadroom": alternate,
+        "deltaStops": max(delta, 0.0),
+        "toleranceStops": tolerance_stops,
+        "baseHeadroom": metadata.get("baseHeadroom"),
+    }
+
+
+def verify_heic_gainmap_alternate_color(output_path):
+    cicp = _read_heic_gainmap_alternate_cicp(output_path)
+    expected = {
+        "primaries": CICP_BT2020_PRIMARIES,
+        "transfer": CICP_PQ_TRANSFER,
+        "matrix": CICP_BT2020_MATRIX,
+    }
+    if any(cicp.get(key) != value for key, value in expected.items()):
+        raise ValueError(f"Fidelity verify failed: HEIC gainmap alternate CICP is {cicp}, expected {expected}")
+    print("  Fidelity verify: HEIC gainmap alternate CICP=9/16/9")
+    return cicp
+
+
 def verify_gainmap_headroom(source_pixels, output_path, tolerance_stops=GAINMAP_HEADROOM_TOLERANCE_STOPS):
     required = source_peak_headroom(source_pixels)
     metadata = _read_gainmap_metadata(output_path)
@@ -193,6 +258,10 @@ def verify_output(source_pixels, output_path, output_format, jxl_mode):
     elif output_format == "gainmap":
         result["checks"]["headroom"] = verify_gainmap_headroom(source_pixels, output_path)
         result["checks"]["alternateColor"] = verify_gainmap_alternate_color(output_path)
+        result["checks"]["peak"] = verify_peak_stops(source_pixels, output_path)
+    elif output_format == "gainmap-heic":
+        result["checks"]["headroom"] = verify_heic_gainmap_headroom(source_pixels, output_path)
+        result["checks"]["alternateColor"] = verify_heic_gainmap_alternate_color(output_path)
         result["checks"]["peak"] = verify_peak_stops(source_pixels, output_path)
     else:
         result["checks"]["peak"] = verify_peak(source_pixels, output_path)
