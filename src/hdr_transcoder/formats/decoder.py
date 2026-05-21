@@ -609,6 +609,8 @@ def _decode_gainmap_heif(raw):
         gain = np.power(2.0, gain_log)
         gain = np.expand_dims(gain, axis=-1) if gain.ndim == 2 else gain
         hdr_rgb = sdr_linear * gain
+    if sdr_primaries == CICP_BT2020_PRIMARIES:
+        hdr_rgb = clamp_small_negatives(linear_bt2020_to_srgb(hdr_rgb))
     hdr_rgba = np.zeros((*hdr_rgb.shape[:2], 4), dtype=np.float32)
     hdr_rgba[..., :3] = hdr_rgb
     hdr_rgba[..., 3] = 1.0

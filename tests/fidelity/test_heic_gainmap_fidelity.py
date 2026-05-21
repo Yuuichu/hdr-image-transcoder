@@ -13,6 +13,7 @@ from hdr_transcoder.formats.isobmff import (
     _find_box,
     _parse_boxes,
     find_item_property,
+    get_item_colr,
     get_item_dimensions,
     read_heic_container,
     read_heic_gainmap_metadata,
@@ -23,6 +24,22 @@ from helpers import ROOT, run_python, stop_delta
 
 
 HEIFGAINMAPUTIL_HDR = ROOT / "tools" / "libheif" / "heifgainmaputil_hdr.py"
+
+
+def test_heic_bt2020_base_conversion_changes_primary_samples():
+    """True BT.2020 HEIC base pixels should not just be retagged sRGB samples."""
+    from tools.libheif.heifgainmaputil_hdr import _convert_srgb_base_to_bt2020_srgb_transfer
+
+    sdr = np.array([[[255, 0, 0], [0, 255, 0], [0, 0, 255]]], dtype=np.uint8)
+    converted = _convert_srgb_base_to_bt2020_srgb_transfer(sdr)
+
+    assert converted.dtype == np.uint8
+    assert converted.shape == sdr.shape
+    assert converted[0, 0, 0] < 255
+    assert converted[0, 0, 1] > 0
+    assert converted[0, 0, 2] > 0
+    assert converted[0, 1, 1] < 255
+    assert converted[0, 2, 2] < 255
 
 
 def _pq_encode_16bit(linear_nits, max_nits=10000.0):
@@ -77,6 +94,47 @@ def _item_references(heic_path):
         ]
         refs.append((ref_type, from_id, to_ids))
     return refs
+
+
+def test_heic_container_honors_alternate_cicp_and_apple_headroom(tmp_path):
+    """Container metadata should preserve non-default alternate CICP and Apple headroom."""
+    from hdr_transcoder.formats.isobmff import build_heic_gainmap_container
+
+    output_path = tmp_path / "metadata.heic"
+    output_path.write_bytes(build_heic_gainmap_container(
+        sdr_bitstream=b"sdr",
+        sdr_hvcC=b"sdr-hvcc",
+        alt_bitstream=b"alt",
+        alt_hvcC=b"alt-hvcc",
+        gainmap_bitstream=b"gm",
+        gainmap_hvcC=b"gm-hvcc",
+        apple_gainmap_bitstream=b"apple-gm",
+        apple_gainmap_hvcC=b"apple-hvcc",
+        sdr_width=2,
+        sdr_height=2,
+        alt_width=2,
+        alt_height=2,
+        gainmap_width=2,
+        gainmap_height=2,
+        apple_gainmap_width=1,
+        apple_gainmap_height=1,
+        alternate_headroom=1.0,
+        apple_headroom=4.0,
+        alternate_primaries=1,
+        alternate_transfer=13,
+        alternate_matrix=1,
+    ))
+
+    container = read_heic_container(output_path)
+    assert get_item_colr(container, 2) == (1, 13, 1)
+
+    tmap = read_heic_gainmap_metadata(output_path)
+    assert tmap["alternate_headroom"] == 1.0
+
+    data = output_path.read_bytes()
+    xmp_offset, xmp_length = container["item_extents"][5][0]
+    xmp_payload = data[xmp_offset:xmp_offset + xmp_length]
+    assert b"<HDRGainMap:HDRGainMapHeadroom>16.000000" in xmp_payload
 
 
 @pytest.mark.fidelity
@@ -145,6 +203,10 @@ def test_gainmap_heic_structure_is_valid(tmp_path):
     assert 5 in extents, "missing XMP item (5)"
     assert 6 in extents, "missing EXIF item (6)"
     assert 7 in extents, "missing Apple HDR gainmap item (7)"
+    assert get_item_colr(container, 1) == (9, 13, 9), "SDR base must be tagged as BT.2020 primaries with sRGB transfer"
+    assert get_item_colr(container, 2) == (9, 16, 9), "HDR alternate must be tagged as BT.2020 PQ"
+    assert get_item_colr(container, 3) == (9, 13, 9), "RGB gainmap must use the base color space"
+    assert get_item_colr(container, 7) == (2, 2, 2), "Apple single-channel gainmap should be uncalibrated"
 
     alt_aux = find_item_property(container, 2, "auxC")
     assert alt_aux is not None, "HDR alternate missing auxC"
