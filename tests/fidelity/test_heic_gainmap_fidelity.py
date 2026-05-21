@@ -309,6 +309,77 @@ def test_gainmap_heic_rgb_gainmap_only_structure_is_valid(tmp_path):
 
 
 @pytest.mark.fidelity
+def test_gainmap_heic_apple_gainmap_only_structure_is_valid(tmp_path):
+    """Verify the Apple-only gainmap HEIC path omits ISO gainmap and HDR alternate items."""
+    import imagecodecs
+    import os
+
+    h, w = 32, 32
+    sdr_8bit = np.full((h, w, 3), 180, dtype=np.uint8)
+    linear_nits = np.full((h, w, 3), 320.0, dtype=np.float32)
+    linear_nits[8:24, 8:24, :] = [700.0, 560.0, 460.0]
+    pq_16bit = _pq_encode_16bit(linear_nits, max_nits=10000.0)
+
+    base_path = tmp_path / "base.png"
+    alt_path = tmp_path / "alternate.png"
+    output_path = tmp_path / "apple_only.heic"
+    base_path.write_bytes(imagecodecs.png_encode(sdr_8bit))
+    alt_path.write_bytes(imagecodecs.png_encode(pq_16bit))
+
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = str(ROOT) if not existing_pythonpath else f"{ROOT}{os.pathsep}{existing_pythonpath}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(HEIFGAINMAPUTIL_HDR),
+            "combine",
+            str(base_path),
+            str(alt_path),
+            str(output_path),
+            "--speed", "8",
+            "--cicp-base", "1/13/1",
+            "--alternate-headroom", "3",
+            "--apple-gainmap-only",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env=env,
+    )
+    assert result.returncode == 0, f"heifgainmaputil_hdr combine failed:\n{result.stdout}\n{result.stderr}"
+
+    container = read_heic_container(output_path)
+    assert set(container["item_extents"]) == {1, 2, 3, 4}
+    assert get_item_colr(container, 1) == (1, 13, 1)
+    assert get_item_colr(container, 2) == (2, 2, 2)
+
+    gm_aux = find_item_property(container, 2, "auxC")
+    assert gm_aux is not None
+    assert b"urn:com:apple:photo:2020:aux:hdrgainmap" in gm_aux
+
+    refs = _item_references(output_path)
+    assert ("auxl", 2, [1]) in refs
+    assert ("cdsc", 3, [2]) in refs
+    assert ("cdsc", 4, [1]) in refs
+
+    data = output_path.read_bytes()
+    xmp_offset, xmp_length = container["item_extents"][3][0]
+    xmp_payload = data[xmp_offset:xmp_offset + xmp_length]
+    assert b"HDRGainMapVersion>131072" in xmp_payload
+    assert b"HDRGainMapHeadroom" in xmp_payload
+
+    output_pixels, _, _ = decode_to_scrgb(str(output_path))
+    assert float(output_pixels[..., :3].max()) > 1.0
+
+    info = inspect_image(output_path)
+    assert info["gainmap"]["present"] is True
+    assert info["gainmap"]["source"] == "Apple HDRGainMap XMP"
+
+
+@pytest.mark.fidelity
 @pytest.mark.tools
 def test_cli_pq_tiff_to_gainmap_heic(tmp_path):
     """End-to-end: --pq-input --format gainmap-heic with verify-fidelity."""

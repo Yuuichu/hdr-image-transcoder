@@ -13,6 +13,7 @@ Usage:
         [--cicp-base <P/T/M>] [--cicp-alternate <P/T/M>]
         [--base-headroom <stops>] [--alternate-headroom <stops>]
         [--rgb-gainmap-only]
+        [--apple-gainmap-only]
 """
 from __future__ import annotations
 
@@ -106,7 +107,7 @@ def _compute_apple_gain_map(
 ) -> tuple[np.ndarray, float]:
     """Compute an Apple-style single-channel gain map from SDR base and HDR alternate.
 
-    Uses luminance-weighted ratios and Rec.709 OETF encoding. Ratios above
+    Uses the maximum RGB channel ratio and Rec.709 OETF encoding. Ratios above
     alternate_headroom are clipped so the gain map remains consistent with the
     Apple metadata headroom.
     The Apple reconstruction formula is:
@@ -123,17 +124,11 @@ def _compute_apple_gain_map(
     sdr_linear = _srgb_to_linear(sdr_8bit[..., :3])
     hdr_linear = _decode_hdr_to_base_linear(hdr_16bit, base_primaries)
 
-    lum_weights = (
-        np.array([0.2627, 0.6780, 0.0593], dtype=np.float32)
-        if base_primaries == 9
-        else np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
-    )
-    sdr_lum = np.maximum(np.dot(sdr_linear, lum_weights), 1e-8)
-    hdr_lum = np.maximum(np.dot(hdr_linear, lum_weights), 1e-8)
-
-    ratio = hdr_lum / sdr_lum
+    ratio_rgb = np.maximum(hdr_linear, 1e-8) / np.maximum(sdr_linear, 1e-8)
+    ratio = np.max(ratio_rgb, axis=-1)
     headroom = max(alternate_headroom, 1.0)
     gain_linear = (ratio - 1.0) / max(headroom - 1.0, 1e-8)
+    gain_linear *= 1.08
     gain_linear = np.clip(gain_linear, 0.0, 1.0)
 
     gain_709 = _rec709_oetf(gain_linear)
@@ -229,10 +224,12 @@ def combine(
     base_headroom: float | None = None,
     alternate_headroom: float | None = None,
     rgb_gainmap_only: bool = False,
+    apple_gainmap_only: bool = False,
 ) -> Path:
     """Combine SDR base PNG and HDR alternate PNG into an ISO 21496-1 gainmap HEIC."""
     import imagecodecs
     from hdr_transcoder.formats.isobmff import (
+        build_heic_apple_gainmap_container,
         build_heic_gainmap_container,
         build_heic_rgb_gainmap_container,
         build_iso21496_tmap_metadata,
@@ -282,6 +279,36 @@ def combine(
         matrix_coefficients=base_m, full_range_flag=1,
         quality=qcolor, chroma="420",
     )
+
+    if apple_gainmap_only:
+        linear_headroom = 2.0 ** max(ah, 0.0)
+        apple_gm_1ch, apple_headroom = _compute_apple_gain_map(
+            base_for_encode,
+            hdr_16bit,
+            alternate_headroom=linear_headroom,
+            base_primaries=base_p,
+        )
+        apple_gm_hvcC, apple_gm_bitstream, apple_gm_w, apple_gm_h, _ = encode_and_extract_hevc(
+            apple_gm_1ch, color_primaries=2, transfer_characteristics=2,
+            matrix_coefficients=2, full_range_flag=1,
+            quality=-1 if qgain_map >= 100 else qgain_map,
+        )
+        container = build_heic_apple_gainmap_container(
+            sdr_bitstream=sdr_bitstream,
+            sdr_hvcC=sdr_hvcC,
+            apple_gainmap_bitstream=apple_gm_bitstream,
+            apple_gainmap_hvcC=apple_gm_hvcC,
+            sdr_width=sdr_w,
+            sdr_height=sdr_h,
+            apple_gainmap_width=apple_gm_w,
+            apple_gainmap_height=apple_gm_h,
+            apple_headroom=apple_headroom,
+            base_primaries=base_p,
+            base_transfer=base_t,
+            base_matrix=base_m,
+        )
+        output_heic.write_bytes(container)
+        return output_heic
 
     alt_hvcC, alt_bitstream, alt_w, alt_h, alt_bits = encode_and_extract_hevc(
         hdr_16bit, color_primaries=alt_p, transfer_characteristics=alt_t,
@@ -419,6 +446,7 @@ def main() -> int:
         base_headroom = None
         alternate_headroom = None
         rgb_gainmap_only = False
+        apple_gainmap_only = False
 
         i = 0
         while i < len(extra):
@@ -443,6 +471,8 @@ def main() -> int:
                 alternate_headroom = float(extra[i + 1]); i += 2
             elif arg == "--rgb-gainmap-only":
                 rgb_gainmap_only = True; i += 1
+            elif arg == "--apple-gainmap-only":
+                apple_gainmap_only = True; i += 1
             elif arg.startswith("--qcolor="):
                 qcolor = int(arg.split("=", 1)[1]); i += 1
             elif arg.startswith("--qgain-map="):
@@ -463,6 +493,8 @@ def main() -> int:
                 alternate_headroom = float(arg.split("=", 1)[1]); i += 1
             elif arg.startswith("--rgb-gainmap-only="):
                 rgb_gainmap_only = arg.split("=", 1)[1].lower() in {"1", "true", "yes", "on"}; i += 1
+            elif arg.startswith("--apple-gainmap-only="):
+                apple_gainmap_only = arg.split("=", 1)[1].lower() in {"1", "true", "yes", "on"}; i += 1
             elif arg in ("-h", "--help"):
                 print(__doc__)
                 return 0
@@ -481,6 +513,7 @@ def main() -> int:
                 base_headroom=base_headroom,
                 alternate_headroom=alternate_headroom,
                 rgb_gainmap_only=rgb_gainmap_only,
+                apple_gainmap_only=apple_gainmap_only,
             )
             print(f"Wrote gainmap HEIC: {result}")
         except Exception as exc:

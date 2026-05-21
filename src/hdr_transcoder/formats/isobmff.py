@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import re
 import struct
 import tempfile
 from pathlib import Path
@@ -482,6 +483,41 @@ def read_heic_gainmap_metadata_from_container(container: dict) -> dict | None:
             "base_headroom_fraction": {"numerator": base_num, "denominator": base_den},
             "alternate_headroom_fraction": {"numerator": alt_num, "denominator": alt_den},
         }
+    return read_heic_apple_gainmap_metadata_from_container(container)
+
+
+def read_heic_apple_gainmap_metadata_from_container(container: dict) -> dict | None:
+    """Read Apple HDR gain map XMP headroom metadata from a parsed HEIC container."""
+    item_extents = container.get("item_extents") or {}
+    data = container.get("data")
+    if data is None:
+        return None
+
+    for extents in item_extents.values():
+        for offset, length in extents:
+            if length <= 0 or length > 65536:
+                continue
+            payload = data[offset:offset + length]
+            if b"HDRGainMapHeadroom" not in payload:
+                continue
+            match = re.search(rb"HDRGainMapHeadroom[^>]*>\s*([0-9.+\-eE]+)", payload)
+            if not match:
+                continue
+            try:
+                linear_headroom = float(match.group(1))
+            except ValueError:
+                continue
+            alternate_value = math.log2(max(linear_headroom, 1.0))
+            return {
+                "raw": f"Apple HDR gain map headroom: {linear_headroom:.6f} ({alternate_value:.6f} stops)",
+                "baseHeadroom": 0.0,
+                "alternateHeadroom": alternate_value,
+                "base_headroom": 0.0,
+                "alternate_headroom": alternate_value,
+                "appleHeadroom": linear_headroom,
+                "apple_headroom": linear_headroom,
+                "source": "Apple HDRGainMap XMP",
+            }
     return None
 
 
@@ -991,6 +1027,105 @@ def build_heic_rgb_gainmap_container(
         mdat_payload_start + sdr_in_mdat,
         mdat_payload_start + gainmap_in_mdat,
         mdat_payload_start + tmap_meta_in_mdat,
+    ]
+    iloc_entries_final = []
+    for i, entry in enumerate(iloc_entries):
+        new_entry = dict(entry)
+        new_entry["extents"] = [{"offset": iloc_offsets[i], "length": entry["extents"][0]["length"]}]
+        iloc_entries_final.append(new_entry)
+    iloc = build_iloc(iloc_entries_final)
+    meta = build_meta(primary_item_id=1, iloc_data=iloc, iinf_data=iinf, iref_data=iref, iprp_data=iprp)
+
+    return ftyp + meta + mdat
+
+
+def build_heic_apple_gainmap_container(
+    sdr_bitstream: bytes,
+    sdr_hvcC: bytes,
+    apple_gainmap_bitstream: bytes,
+    apple_gainmap_hvcC: bytes,
+    sdr_width: int,
+    sdr_height: int,
+    apple_gainmap_width: int,
+    apple_gainmap_height: int,
+    apple_headroom: float = 3.0,
+    base_primaries: int = 1,
+    base_transfer: int = 13,
+    base_matrix: int = 1,
+) -> bytes:
+    """Build an Apple HDR gain map HEIC container without ISO gainmap items.
+
+    Items:
+      1 (primary): SDR base image
+      2: Apple single-channel HDR gain map auxiliary image
+      3: XMP metadata with HDRGainMap headroom
+      4: EXIF metadata with MakerApple HDR tags
+    """
+    xmp_data = build_apple_hdr_gainmap_xmp(apple_headroom)
+    exif_data = build_apple_makernote_exif(apple_headroom)
+
+    mdat_content = sdr_bitstream + apple_gainmap_bitstream + xmp_data + exif_data
+    mdat = build_box("mdat", mdat_content)
+
+    sdr_in_mdat = 0
+    apple_gm_in_mdat = len(sdr_bitstream)
+    xmp_in_mdat = apple_gm_in_mdat + len(apple_gainmap_bitstream)
+    exif_in_mdat = xmp_in_mdat + len(xmp_data)
+
+    iinf = build_iinf([
+        {"id": 1, "type": "hvc1", "name": "Primary"},
+        {"id": 2, "type": "hvc1", "name": "AppleGainMap"},
+        {"id": 3, "type": "mime", "name": "", "content_type": "application/rdf+xml", "flags": 1},
+        {"id": 4, "type": "Exif", "name": "", "flags": 1},
+    ])
+
+    properties = [
+        # 1-5: SDR base
+        {"type": "hvcC", "data": sdr_hvcC},
+        {"type": "ispe", "width": sdr_width, "height": sdr_height},
+        {"type": "pixi", "bits_per_channel": [8, 8, 8]},
+        {"type": "colr", "primaries": base_primaries, "transfer": base_transfer, "matrix": base_matrix, "full_range": 1},
+        {"type": "pasp"},
+        # 6-10: Apple gain map
+        {"type": "hvcC", "data": apple_gainmap_hvcC},
+        {"type": "ispe", "width": apple_gainmap_width, "height": apple_gainmap_height},
+        {"type": "pixi", "bits_per_channel": [8]},
+        {"type": "colr", "primaries": 2, "transfer": 2, "matrix": 2, "full_range": 1},
+        {"type": "auxC", "aux_type": "urn:com:apple:photo:2020:aux:hdrgainmap"},
+    ]
+    ipco = build_ipco(properties)
+    ipma = build_ipma({
+        1: [(1, True), (2, False), (3, False), (4, False), (5, False)],
+        2: [(6, True), (7, False), (8, False), (9, False), (10, True)],
+    })
+    iprp = build_box("iprp", ipco + ipma)
+
+    iref = build_iref([
+        {"type": "auxl", "from": 2, "to": [1]},
+        {"type": "cdsc", "from": 3, "to": [2]},
+        {"type": "cdsc", "from": 4, "to": [1]},
+    ])
+
+    ftyp = build_ftyp("heic", ["mif1", "MiHB", "MiHA", "miaf", "heic"])
+    iloc_entries = [
+        {"id": 1, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+         "extents": [{"offset": 0, "length": len(sdr_bitstream)}]},
+        {"id": 2, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+         "extents": [{"offset": 0, "length": len(apple_gainmap_bitstream)}]},
+        {"id": 3, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+         "extents": [{"offset": 0, "length": len(xmp_data)}]},
+        {"id": 4, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+         "extents": [{"offset": 0, "length": len(exif_data)}]},
+    ]
+    iloc_placeholder = build_iloc(iloc_entries)
+    meta_placeholder = build_meta(primary_item_id=1, iloc_data=iloc_placeholder, iinf_data=iinf, iref_data=iref, iprp_data=iprp)
+    mdat_payload_start = len(ftyp) + len(meta_placeholder) + 8
+
+    iloc_offsets = [
+        mdat_payload_start + sdr_in_mdat,
+        mdat_payload_start + apple_gm_in_mdat,
+        mdat_payload_start + xmp_in_mdat,
+        mdat_payload_start + exif_in_mdat,
     ]
     iloc_entries_final = []
     for i, entry in enumerate(iloc_entries):

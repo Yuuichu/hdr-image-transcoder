@@ -123,6 +123,7 @@ def encode_gainmap_heic(
     base_headroom=None,
     alternate_headroom=None,
     rgb_gainmap_only=False,
+    apple_gainmap_only=False,
 ):
     """Encode SDR base + HDR alternate to gainmap HEIC (ISO 21496-1).
 
@@ -136,6 +137,7 @@ def encode_gainmap_heic(
         base_headroom: optional log2 base headroom metadata override
         alternate_headroom: optional log2 alternate headroom metadata override
         rgb_gainmap_only: write a minimal ISO RGB gainmap HEIC without HDR alternate or Apple gain map
+        apple_gainmap_only: write an Apple auxiliary gainmap HEIC without ISO RGB gainmap or HDR alternate
 
     Returns:
         Path to the output HEIC file
@@ -159,6 +161,11 @@ def encode_gainmap_heic(
         base_png.write_bytes(imagecodecs.png_encode(sdr_8bit))
         alternate_png.write_bytes(imagecodecs.png_encode(hdr_16bit))
 
+        base_cicp = (
+            f"{CICP_BT709_PRIMARIES}/{CICP_SRGB_TRANSFER}/{CICP_BT709_MATRIX}"
+            if apple_gainmap_only
+            else f"{CICP_BT2020_PRIMARIES}/{CICP_SRGB_TRANSFER}/{CICP_BT2020_MATRIX}"
+        )
         cmd = [
             sys.executable, str(HEIFGAINMAPUTIL_HDR), "combine",
             str(base_png),
@@ -167,7 +174,7 @@ def encode_gainmap_heic(
             "--qcolor", str(quality),
             "--qgain-map", str(quality),
             "--speed", str(speed),
-            "--cicp-base", f"{CICP_BT2020_PRIMARIES}/{CICP_SRGB_TRANSFER}/{CICP_BT2020_MATRIX}",
+            "--cicp-base", base_cicp,
             "--cicp-alternate", f"{CICP_BT2020_PRIMARIES}/{CICP_PQ_TRANSFER}/{CICP_BT2020_MATRIX}",
         ]
         if max_headroom is not None:
@@ -178,6 +185,8 @@ def encode_gainmap_heic(
             cmd.extend(["--alternate-headroom", str(alternate_headroom)])
         if rgb_gainmap_only:
             cmd.append("--rgb-gainmap-only")
+        if apple_gainmap_only:
+            cmd.append("--apple-gainmap-only")
         project_root = str(HEIFGAINMAPUTIL_HDR.parents[2])
         env = os.environ.copy()
         existing_pythonpath = env.get("PYTHONPATH", "")
