@@ -984,9 +984,13 @@ def build_heic_gainmap_container(
     apple_gainmap_height: int,
     base_headroom: float = 0.0,
     alternate_headroom: float = 3.0,
+    apple_headroom: float | None = None,
     base_primaries: int = 9,
     base_transfer: int = 13,
     base_matrix: int = 9,
+    alternate_primaries: int = 9,
+    alternate_transfer: int = 16,
+    alternate_matrix: int = 9,
     tmap_metadata: bytes = b"",
     alt_bits_per_channel: list[int] | None = None,
     gainmap_bits_per_channel: list[int] | None = None,
@@ -1008,9 +1012,10 @@ def build_heic_gainmap_container(
         gainmap_bits_per_channel = [8, 8, 8]
 
     has_apple_gm = bool(apple_gainmap_bitstream)
+    apple_metadata_headroom = alternate_headroom if apple_headroom is None else apple_headroom
 
-    xmp_data = build_apple_hdr_gainmap_xmp(alternate_headroom)
-    exif_data = build_apple_makernote_exif(alternate_headroom)
+    xmp_data = build_apple_hdr_gainmap_xmp(apple_metadata_headroom)
+    exif_data = build_apple_makernote_exif(apple_metadata_headroom)
 
     mdat_content = (
         sdr_bitstream + alt_bitstream + gainmap_bitstream +
@@ -1059,7 +1064,7 @@ def build_heic_gainmap_container(
         {"type": "hvcC", "data": alt_hvcC},
         {"type": "ispe", "width": alt_width, "height": alt_height},
         {"type": "pixi", "bits_per_channel": alt_bits_per_channel},
-        {"type": "colr", "primaries": 9, "transfer": 16, "matrix": 9, "full_range": 1},
+        {"type": "colr", "primaries": alternate_primaries, "transfer": alternate_transfer, "matrix": alternate_matrix, "full_range": 1},
         {"type": "auxC", "aux_type": "urn:iso:std:iso:ts:21496:-1:aux:alternateImage"},
         # 12-16: Gain map
         {"type": "hvcC", "data": gainmap_hvcC},
