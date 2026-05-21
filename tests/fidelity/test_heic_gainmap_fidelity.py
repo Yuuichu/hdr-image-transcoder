@@ -249,6 +249,66 @@ def test_gainmap_heic_structure_is_valid(tmp_path):
 
 
 @pytest.mark.fidelity
+def test_gainmap_heic_rgb_gainmap_only_structure_is_valid(tmp_path):
+    """Verify the clean ISO RGB gainmap HEIC path omits HDR alternate and Apple items."""
+    import imagecodecs
+    import os
+
+    h, w = 32, 32
+    sdr_8bit = np.full((h, w, 3), 64, dtype=np.uint8)
+    linear_nits = np.full((h, w, 3), 400.0, dtype=np.float32)
+    linear_nits[8:24, 8:24, :] = [700.0, 500.0, 450.0]
+    pq_16bit = _pq_encode_16bit(linear_nits, max_nits=10000.0)
+
+    base_path = tmp_path / "base.png"
+    alt_path = tmp_path / "alternate.png"
+    output_path = tmp_path / "rgb_only.heic"
+    base_path.write_bytes(imagecodecs.png_encode(sdr_8bit))
+    alt_path.write_bytes(imagecodecs.png_encode(pq_16bit))
+
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = str(ROOT) if not existing_pythonpath else f"{ROOT}{os.pathsep}{existing_pythonpath}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(HEIFGAINMAPUTIL_HDR),
+            "combine",
+            str(base_path),
+            str(alt_path),
+            str(output_path),
+            "--speed", "8",
+            "--alternate-headroom", "3",
+            "--rgb-gainmap-only",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env=env,
+    )
+    assert result.returncode == 0, f"heifgainmaputil_hdr combine failed:\n{result.stdout}\n{result.stderr}"
+
+    container = read_heic_container(output_path)
+    assert set(container["item_extents"]) == {1, 2, 3}
+    assert get_item_colr(container, 1) == (9, 13, 9)
+    assert get_item_colr(container, 2) == (9, 13, 9)
+    assert find_item_property(container, 2, "auxC") is not None
+    assert b"urn:iso:std:iso:ts:21496:-1:aux:gainmap" in find_item_property(container, 2, "auxC")
+
+    refs = _item_references(output_path)
+    assert ("auxl", 2, [1]) in refs
+    assert ("dimg", 3, [1, 2]) in refs
+
+    output_pixels, _, _ = decode_to_scrgb(str(output_path))
+    assert float(output_pixels[..., :3].max()) > 1.0
+
+    info = inspect_image(output_path)
+    assert info["gainmap"]["present"] is True
+
+
+@pytest.mark.fidelity
 @pytest.mark.tools
 def test_cli_pq_tiff_to_gainmap_heic(tmp_path):
     """End-to-end: --pq-input --format gainmap-heic with verify-fidelity."""

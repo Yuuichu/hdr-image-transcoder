@@ -122,6 +122,7 @@ def encode_gainmap_heic(
     max_headroom=None,
     base_headroom=None,
     alternate_headroom=None,
+    rgb_gainmap_only=False,
 ):
     """Encode SDR base + HDR alternate to gainmap HEIC (ISO 21496-1).
 
@@ -134,6 +135,7 @@ def encode_gainmap_heic(
         max_headroom: optional legacy headroom cap (ignored for now)
         base_headroom: optional log2 base headroom metadata override
         alternate_headroom: optional log2 alternate headroom metadata override
+        rgb_gainmap_only: write a minimal ISO RGB gainmap HEIC without HDR alternate or Apple gain map
 
     Returns:
         Path to the output HEIC file
@@ -174,6 +176,8 @@ def encode_gainmap_heic(
             cmd.extend(["--base-headroom", str(base_headroom)])
         if alternate_headroom is not None:
             cmd.extend(["--alternate-headroom", str(alternate_headroom)])
+        if rgb_gainmap_only:
+            cmd.append("--rgb-gainmap-only")
         project_root = str(HEIFGAINMAPUTIL_HDR.parents[2])
         env = os.environ.copy()
         existing_pythonpath = env.get("PYTHONPATH", "")

@@ -905,6 +905,104 @@ def build_apple_hdr_gainmap_xmp(headroom_stops: float) -> bytes:
 </x:xmpmeta>""".encode("utf-8")
 
 
+def build_heic_rgb_gainmap_container(
+    sdr_bitstream: bytes,
+    sdr_hvcC: bytes,
+    gainmap_bitstream: bytes,
+    gainmap_hvcC: bytes,
+    sdr_width: int,
+    sdr_height: int,
+    gainmap_width: int,
+    gainmap_height: int,
+    base_headroom: float = 0.0,
+    alternate_headroom: float = 3.0,
+    base_primaries: int = 9,
+    base_transfer: int = 13,
+    base_matrix: int = 9,
+    tmap_metadata: bytes = b"",
+    gainmap_bits_per_channel: list[int] | None = None,
+) -> bytes:
+    """Build a minimal ISO 21496-1 RGB gainmap HEIC container.
+
+    Items:
+      1 (primary): SDR base image
+      2: RGB gain map image, ISO 21496-1 aux gainmap
+      3: ISO 21496-1 tmap binary metadata item
+    """
+    if gainmap_bits_per_channel is None:
+        gainmap_bits_per_channel = [8, 8, 8]
+
+    mdat_content = sdr_bitstream + gainmap_bitstream + tmap_metadata
+    mdat = build_box("mdat", mdat_content)
+
+    sdr_in_mdat = 0
+    gainmap_in_mdat = len(sdr_bitstream)
+    tmap_meta_in_mdat = gainmap_in_mdat + len(gainmap_bitstream)
+
+    iinf = build_iinf([
+        {"id": 1, "type": "hvc1", "name": "Primary"},
+        {"id": 2, "type": "hvc1", "name": "GainMap"},
+        {"id": 3, "type": "tmap", "name": ""},
+    ])
+
+    properties = [
+        # 1-5: SDR base
+        {"type": "hvcC", "data": sdr_hvcC},
+        {"type": "ispe", "width": sdr_width, "height": sdr_height},
+        {"type": "pixi", "bits_per_channel": [8, 8, 8]},
+        {"type": "colr", "primaries": base_primaries, "transfer": base_transfer, "matrix": base_matrix, "full_range": 1},
+        {"type": "pasp"},
+        # 6: tmap headroom property
+        {"type": "tmap", "base_headroom": base_headroom, "alternate_headroom": alternate_headroom},
+        # 7-11: RGB gain map
+        {"type": "hvcC", "data": gainmap_hvcC},
+        {"type": "ispe", "width": gainmap_width, "height": gainmap_height},
+        {"type": "pixi", "bits_per_channel": gainmap_bits_per_channel},
+        {"type": "colr", "primaries": base_primaries, "transfer": base_transfer, "matrix": base_matrix, "full_range": 1},
+        {"type": "auxC", "aux_type": "urn:iso:std:iso:ts:21496:-1:aux:gainmap"},
+    ]
+    ipco = build_ipco(properties)
+    ipma = build_ipma({
+        1: [(1, True), (2, False), (3, False), (4, False), (5, False), (6, False)],
+        2: [(7, True), (8, False), (9, False), (10, False), (11, True)],
+        3: [(6, False), (2, False), (9, False), (10, False)],
+    })
+    iprp = build_box("iprp", ipco + ipma)
+
+    iref = build_iref([
+        {"type": "auxl", "from": 2, "to": [1]},
+        {"type": "dimg", "from": 3, "to": [1, 2]},
+    ])
+
+    ftyp = build_ftyp("heic", ["mif1", "MiHB", "MiPr", "miaf", "heic", "tmap"])
+    iloc_entries = [
+        {"id": 1, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+         "extents": [{"offset": 0, "length": len(sdr_bitstream)}]},
+        {"id": 2, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+         "extents": [{"offset": 0, "length": len(gainmap_bitstream)}]},
+        {"id": 3, "construction_method": 0, "data_ref_idx": 0, "base_offset": 0,
+         "extents": [{"offset": 0, "length": len(tmap_metadata)}]},
+    ]
+    iloc_placeholder = build_iloc(iloc_entries)
+    meta_placeholder = build_meta(primary_item_id=1, iloc_data=iloc_placeholder, iinf_data=iinf, iref_data=iref, iprp_data=iprp)
+    mdat_payload_start = len(ftyp) + len(meta_placeholder) + 8
+
+    iloc_offsets = [
+        mdat_payload_start + sdr_in_mdat,
+        mdat_payload_start + gainmap_in_mdat,
+        mdat_payload_start + tmap_meta_in_mdat,
+    ]
+    iloc_entries_final = []
+    for i, entry in enumerate(iloc_entries):
+        new_entry = dict(entry)
+        new_entry["extents"] = [{"offset": iloc_offsets[i], "length": entry["extents"][0]["length"]}]
+        iloc_entries_final.append(new_entry)
+    iloc = build_iloc(iloc_entries_final)
+    meta = build_meta(primary_item_id=1, iloc_data=iloc, iinf_data=iinf, iref_data=iref, iprp_data=iprp)
+
+    return ftyp + meta + mdat
+
+
 def _encode_iso21496_signed_rational(value: float, denominator: int = 1_000_000) -> int:
     """Encode a signed float as numerator for a shared-denominator rational."""
     return int(round(np.clip(value, -2_147_483_648 / denominator, 2_147_483_647 / denominator) * denominator))

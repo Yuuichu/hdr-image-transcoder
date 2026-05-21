@@ -204,7 +204,7 @@ def convert_single(input_path, output_path, quality=100, speed=0, max_headroom=N
                    allow_non_master=False, verify_fidelity=False,
                    gainmap_headroom_mode=GAINMAP_HEADROOM_SOURCE_PEAK,
                    debug_overlay=False, info_json=False,
-                   pq_input=False):
+                   pq_input=False, heic_rgb_gainmap_only=False):
     """Convert a single HDR image to the specified output format."""
     input_path = Path(input_path)
     output_path = Path(output_path)
@@ -272,6 +272,7 @@ def convert_single(input_path, output_path, quality=100, speed=0, max_headroom=N
             max_headroom=max_headroom,
             base_headroom=base_headroom,
             alternate_headroom=alternate_headroom,
+            **({"rgb_gainmap_only": heic_rgb_gainmap_only} if output_format == "gainmap-heic" else {}),
         )
 
     size_mb = output_path.stat().st_size / (1024 * 1024)
@@ -321,6 +322,8 @@ def _validate_args(parser, args):
         parser.error(f"--jxl-mode must be one of: {', '.join(sorted(JXL_MODES))}")
     if args.gainmap_headroom_mode not in GAINMAP_HEADROOM_MODES:
         parser.error(f"--gainmap-headroom-mode must be one of: {', '.join(sorted(GAINMAP_HEADROOM_MODES))}")
+    if args.heic_rgb_gainmap_only and args.format not in (None, "gainmap-heic"):
+        parser.error("--heic-rgb-gainmap-only can only be used with --format gainmap-heic")
     if args.name_start < 0:
         parser.error("--name-start must be >= 0")
     if args.name_padding < 0:
@@ -367,6 +370,8 @@ def main():
                         help="Write a sidecar output.info.json file with inspector and verify metadata")
     parser.add_argument("--pq-input", action="store_true",
                         help="Treat TIFF input as PQ HDR (when CICP metadata is absent)")
+    parser.add_argument("--heic-rgb-gainmap-only", action="store_true",
+                        help="For gainmap-heic, write only SDR base + ISO RGB gainmap + tmap metadata")
     parser.add_argument("--name-prefix", default="",
                         help="Prefix added to batch output filenames")
     parser.add_argument("--name-suffix", default="",
@@ -470,6 +475,7 @@ def main():
                     debug_overlay=args.debug_overlay,
                     info_json=args.info_json,
                     pq_input=args.pq_input,
+                    heic_rgb_gainmap_only=args.heic_rgb_gainmap_only,
                 )
             except Exception as exc:
                 print(f"  ERROR: {exc}")
@@ -525,6 +531,7 @@ def main():
                     debug_overlay=args.debug_overlay,
                     info_json=args.info_json,
                     pq_input=args.pq_input,
+                    heic_rgb_gainmap_only=args.heic_rgb_gainmap_only,
                 )
             except Exception as exc:
                 print(f"  ERROR: {exc}")

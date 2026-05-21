@@ -195,8 +195,8 @@ def verify_heic_gainmap_alternate_color(output_path):
     try:
         cicp = _read_heic_gainmap_alternate_cicp(output_path)
     except ValueError:
-        print("  Fidelity verify: HEIC gainmap uses Apple auxiliary map (no HDR alternate image)")
-        return {"mode": "apple-auxiliary", "skipped": True}
+        print("  Fidelity verify: HEIC gainmap has no HDR alternate image; alternate CICP check skipped")
+        return {"mode": "gainmap-only", "skipped": True}
     expected = {
         "primaries": CICP_BT2020_PRIMARIES,
         "transfer": CICP_PQ_TRANSFER,

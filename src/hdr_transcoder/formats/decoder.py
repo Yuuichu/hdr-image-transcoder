@@ -515,17 +515,22 @@ def _decode_gainmap_heif(raw):
     is_apple_gainmap = False
     is_iso21496 = False
     iso_meta = None
-    if 3 in item_extents and find_item_property(container, 3, "hvcC") is not None:
-        gainmap_item_id = 3
-        aux_type = find_item_property(container, 3, "auxC")
+    for item_id in sorted(item_extents):
+        aux_type = find_item_property(container, item_id, "auxC")
         if aux_type and b"urn:iso:std:iso:ts:21496:-1:aux:gainmap" in aux_type:
+            if find_item_property(container, item_id, "hvcC") is None:
+                continue
+            gainmap_item_id = item_id
             is_iso21496 = True
             from hdr_transcoder.formats.isobmff import read_heic_iso21496_metadata
             iso_meta = read_heic_iso21496_metadata(container)
-    else:
+            break
+    if gainmap_item_id is None:
         for item_id in sorted(item_extents):
             aux_type = find_item_property(container, item_id, "auxC")
             if aux_type and b"urn:com:apple:photo:2020:aux:hdrgainmap" in aux_type:
+                if find_item_property(container, item_id, "hvcC") is None:
+                    continue
                 gainmap_item_id = item_id
                 is_apple_gainmap = True
                 break

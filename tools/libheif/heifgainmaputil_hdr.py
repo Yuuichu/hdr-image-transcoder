@@ -12,6 +12,7 @@ Usage:
         [--speed <0-10>]
         [--cicp-base <P/T/M>] [--cicp-alternate <P/T/M>]
         [--base-headroom <stops>] [--alternate-headroom <stops>]
+        [--rgb-gainmap-only]
 """
 from __future__ import annotations
 
@@ -227,10 +228,16 @@ def combine(
     cicp_alternate: str = "9/16/9",
     base_headroom: float | None = None,
     alternate_headroom: float | None = None,
+    rgb_gainmap_only: bool = False,
 ) -> Path:
     """Combine SDR base PNG and HDR alternate PNG into an ISO 21496-1 gainmap HEIC."""
     import imagecodecs
-    from hdr_transcoder.formats.isobmff import build_heic_gainmap_container, build_iso21496_tmap_metadata, encode_and_extract_hevc
+    from hdr_transcoder.formats.isobmff import (
+        build_heic_gainmap_container,
+        build_heic_rgb_gainmap_container,
+        build_iso21496_tmap_metadata,
+        encode_and_extract_hevc,
+    )
 
     output_heic = Path(output_heic)
     output_heic.parent.mkdir(parents=True, exist_ok=True)
@@ -288,6 +295,37 @@ def combine(
         quality=-1 if qgain_map >= 100 else qgain_map,
     )
 
+    tmap_meta = build_iso21496_tmap_metadata(
+        gain_map_min=gm_min,
+        gain_map_max=gm_max,
+        gamma=gm_gamma,
+        base_offset=gm_base_off,
+        alternate_offset=gm_alt_off,
+        base_headroom=bh,
+        alternate_headroom=ah,
+    )
+
+    if rgb_gainmap_only:
+        container = build_heic_rgb_gainmap_container(
+            sdr_bitstream=sdr_bitstream,
+            sdr_hvcC=sdr_hvcC,
+            gainmap_bitstream=gm_bitstream,
+            gainmap_hvcC=gm_hvcC,
+            sdr_width=sdr_w,
+            sdr_height=sdr_h,
+            gainmap_width=gm_w,
+            gainmap_height=gm_h,
+            base_headroom=bh,
+            alternate_headroom=ah,
+            base_primaries=base_p,
+            base_transfer=base_t,
+            base_matrix=base_m,
+            tmap_metadata=tmap_meta,
+            gainmap_bits_per_channel=gm_bits,
+        )
+        output_heic.write_bytes(container)
+        return output_heic
+
     linear_headroom = 2.0 ** max(ah, 0.0)
     apple_gm_1ch, apple_headroom = _compute_apple_gain_map(
         base_for_encode,
@@ -299,16 +337,6 @@ def combine(
         apple_gm_1ch, color_primaries=2, transfer_characteristics=2,
         matrix_coefficients=2, full_range_flag=1,
         quality=-1 if qgain_map >= 100 else qgain_map,
-    )
-
-    tmap_meta = build_iso21496_tmap_metadata(
-        gain_map_min=gm_min,
-        gain_map_max=gm_max,
-        gamma=gm_gamma,
-        base_offset=gm_base_off,
-        alternate_offset=gm_alt_off,
-        base_headroom=bh,
-        alternate_headroom=ah,
     )
 
     container = build_heic_gainmap_container(
@@ -390,6 +418,7 @@ def main() -> int:
         cicp_alternate = "9/16/9"
         base_headroom = None
         alternate_headroom = None
+        rgb_gainmap_only = False
 
         i = 0
         while i < len(extra):
@@ -412,6 +441,8 @@ def main() -> int:
                 base_headroom = float(extra[i + 1]); i += 2
             elif arg == "--alternate-headroom":
                 alternate_headroom = float(extra[i + 1]); i += 2
+            elif arg == "--rgb-gainmap-only":
+                rgb_gainmap_only = True; i += 1
             elif arg.startswith("--qcolor="):
                 qcolor = int(arg.split("=", 1)[1]); i += 1
             elif arg.startswith("--qgain-map="):
@@ -430,6 +461,8 @@ def main() -> int:
                 base_headroom = float(arg.split("=", 1)[1]); i += 1
             elif arg.startswith("--alternate-headroom="):
                 alternate_headroom = float(arg.split("=", 1)[1]); i += 1
+            elif arg.startswith("--rgb-gainmap-only="):
+                rgb_gainmap_only = arg.split("=", 1)[1].lower() in {"1", "true", "yes", "on"}; i += 1
             elif arg in ("-h", "--help"):
                 print(__doc__)
                 return 0
@@ -447,6 +480,7 @@ def main() -> int:
                 cicp_alternate=cicp_alternate,
                 base_headroom=base_headroom,
                 alternate_headroom=alternate_headroom,
+                rgb_gainmap_only=rgb_gainmap_only,
             )
             print(f"Wrote gainmap HEIC: {result}")
         except Exception as exc:
