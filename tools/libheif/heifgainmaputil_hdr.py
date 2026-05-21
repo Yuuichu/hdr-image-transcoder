@@ -130,8 +130,7 @@ def _compute_apple_gain_map(
     ratio = np.max(ratio_rgb, axis=-1)
     headroom = max(alternate_headroom, 1.0)
     gain_linear = (ratio - 1.0) / max(headroom - 1.0, 1e-8)
-    gain_linear *= 1.08
-    gain_linear = np.clip(gain_linear, 0.0, 1.0)
+    gain_linear = np.clip(gain_linear, 0.0, 0.90)
 
     gain_709 = _rec709_oetf(gain_linear)
     full_res = (gain_709 * 255.0 + 0.5).clip(0, 255).astype(np.uint8)

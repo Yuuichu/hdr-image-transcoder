@@ -52,7 +52,7 @@ def prepare_base_sdr(hdr_linear, headroom=1.0):
     return (sdr_gamma * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
 
 
-def prepare_base_sdr_display_p3(hdr_linear, headroom=1.0):
+def prepare_base_sdr_display_p3(hdr_linear, headroom=1.0, saturation=1.18, contrast=1.08):
     """Tone-map HDR data to an 8-bit Display P3 SDR base image.
 
     The tone curve is applied to luminance and then reused as an RGB scale so
@@ -70,6 +70,15 @@ def prepare_base_sdr_display_p3(hdr_linear, headroom=1.0):
     mapped_luminance = luminance * (1.0 + luminance / (white_point * white_point)) / (1.0 + luminance)
     scale = mapped_luminance / np.maximum(luminance, 1e-8)
     sdr_p3 = hdr_p3 * scale
+
+    if contrast != 1.0:
+        pivot = np.float32(0.18)
+        sdr_p3 = pivot * np.power(np.maximum(sdr_p3, 0.0) / pivot, contrast)
+    if saturation != 1.0:
+        sdr_luminance = np.sum(sdr_p3 * lum_weights, axis=-1, keepdims=True)
+        sdr_p3 = sdr_luminance + (sdr_p3 - sdr_luminance) * saturation
+        sdr_p3 = np.maximum(sdr_p3, 0.0)
+
     max_channel = np.max(sdr_p3, axis=-1, keepdims=True)
     sdr_p3 = np.where(max_channel > 1.0, sdr_p3 / np.maximum(max_channel, 1e-8), sdr_p3)
     sdr_gamma = _srgb_gamma(sdr_p3)
