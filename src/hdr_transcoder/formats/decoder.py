@@ -17,8 +17,10 @@ from hdr_transcoder.color import (
     CICP_BT2020_MATRIX,
     CICP_BT2020_PRIMARIES,
     CICP_BT709_PRIMARIES,
+    CICP_DISPLAY_P3_PRIMARIES,
     CICP_PQ_TRANSFER,
     clamp_small_negatives,
+    linear_display_p3_to_srgb,
     linear_bt2020_to_srgb,
 )
 from hdr_transcoder.config import METADATA_TIMEOUT_SECONDS, TRANSCODE_TIMEOUT_SECONDS
@@ -199,6 +201,8 @@ def _convert_hdr_rgb_to_scrgb(linear_rgb, primaries=None):
     """Convert decoded linear HDR RGB samples to the internal scRGB space."""
     if primaries == CICP_BT2020_PRIMARIES:
         return clamp_small_negatives(linear_bt2020_to_srgb(linear_rgb))
+    if primaries == CICP_DISPLAY_P3_PRIMARIES:
+        return clamp_small_negatives(linear_display_p3_to_srgb(linear_rgb))
     return linear_rgb
 
 
@@ -614,8 +618,7 @@ def _decode_gainmap_heif(raw):
         gain = np.power(2.0, gain_log)
         gain = np.expand_dims(gain, axis=-1) if gain.ndim == 2 else gain
         hdr_rgb = sdr_linear * gain
-    if sdr_primaries == CICP_BT2020_PRIMARIES:
-        hdr_rgb = clamp_small_negatives(linear_bt2020_to_srgb(hdr_rgb))
+    hdr_rgb = _convert_hdr_rgb_to_scrgb(hdr_rgb, sdr_primaries)
     hdr_rgba = np.zeros((*hdr_rgb.shape[:2], 4), dtype=np.float32)
     hdr_rgba[..., :3] = hdr_rgb
     hdr_rgba[..., 3] = 1.0

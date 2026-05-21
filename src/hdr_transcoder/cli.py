@@ -32,7 +32,7 @@ from hdr_transcoder.formats import (
     OUTPUT_FORMATS,
     encode_output,
 )
-from hdr_transcoder.processor import prepare_alternate_hdr, prepare_base_sdr
+from hdr_transcoder.processor import prepare_alternate_hdr, prepare_base_sdr, prepare_base_sdr_display_p3
 from hdr_transcoder.validation import source_peak_headroom as _source_peak_headroom
 from hdr_transcoder.validation import verify_output as _verify_output
 
@@ -244,7 +244,11 @@ def convert_single(input_path, output_path, quality=100, speed=0, max_headroom=N
         if gainmap_headroom_mode not in GAINMAP_HEADROOM_MODES:
             raise ValueError(f"Unknown gainmap headroom mode: {gainmap_headroom_mode}")
         print(f"  Computing SDR base (headroom={headroom}) and HDR alternate...")
-        sdr = prepare_base_sdr(hdr, headroom=headroom)
+        sdr = (
+            prepare_base_sdr_display_p3(hdr, headroom=headroom)
+            if output_format == "gainmap-heic" and heic_apple_gainmap_only
+            else prepare_base_sdr(hdr, headroom=headroom)
+        )
         alt = prepare_alternate_hdr(hdr)
         base_headroom = None
         alternate_headroom = None

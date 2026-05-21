@@ -6,7 +6,7 @@ alternate image, and a legacy gain-map representation.
 """
 import numpy as np
 
-from hdr_transcoder.color import clamp_small_negatives, linear_srgb_to_bt2020
+from hdr_transcoder.color import clamp_small_negatives, linear_srgb_to_bt2020, linear_srgb_to_display_p3
 
 
 def _srgb_gamma(linear):
@@ -49,6 +49,30 @@ def prepare_base_sdr(hdr_linear, headroom=1.0):
     white_point = max(2.0 ** headroom, peak, 1.0)
     sdr_linear = hdr_rgb * (1.0 + hdr_rgb / (white_point * white_point)) / (1.0 + hdr_rgb)
     sdr_gamma = _srgb_gamma(sdr_linear)
+    return (sdr_gamma * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
+
+
+def prepare_base_sdr_display_p3(hdr_linear, headroom=1.0):
+    """Tone-map HDR data to an 8-bit Display P3 SDR base image.
+
+    The tone curve is applied to luminance and then reused as an RGB scale so
+    hue/chroma survive better than per-channel SDR tone mapping.
+    """
+    if headroom <= 0:
+        raise ValueError("headroom must be > 0")
+
+    hdr_p3 = clamp_small_negatives(linear_srgb_to_display_p3(hdr_linear[..., :3]))
+    hdr_p3 = np.maximum(hdr_p3, 0.0)
+    lum_weights = np.array([0.2289746, 0.6917385, 0.0792869], dtype=np.float32)
+    luminance = np.sum(hdr_p3 * lum_weights, axis=-1, keepdims=True)
+    peak = float(np.max(luminance)) if luminance.size else 1.0
+    white_point = max(2.0 ** headroom, peak, 1.0)
+    mapped_luminance = luminance * (1.0 + luminance / (white_point * white_point)) / (1.0 + luminance)
+    scale = mapped_luminance / np.maximum(luminance, 1e-8)
+    sdr_p3 = hdr_p3 * scale
+    max_channel = np.max(sdr_p3, axis=-1, keepdims=True)
+    sdr_p3 = np.where(max_channel > 1.0, sdr_p3 / np.maximum(max_channel, 1e-8), sdr_p3)
+    sdr_gamma = _srgb_gamma(sdr_p3)
     return (sdr_gamma * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
 
 

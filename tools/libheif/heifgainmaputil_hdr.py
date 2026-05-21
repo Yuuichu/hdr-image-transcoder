@@ -55,12 +55,14 @@ def _convert_srgb_base_to_bt2020_srgb_transfer(sdr_8bit: np.ndarray) -> np.ndarr
 
 def _decode_hdr_to_base_linear(hdr_16bit: np.ndarray, base_primaries: int) -> np.ndarray:
     """Decode BT.2020 PQ alternate into the linear color space used by the SDR base."""
-    from hdr_transcoder.color import clamp_small_negatives, linear_bt2020_to_srgb
+    from hdr_transcoder.color import clamp_small_negatives, linear_bt2020_to_display_p3, linear_bt2020_to_srgb
 
     hdr_float = hdr_16bit[..., :3].astype(np.float32) / 65535.0
     hdr_linear_bt2020 = _pq_to_linear(hdr_float, max_nits=10000.0) / 100.0
     if base_primaries == 9:
         return clamp_small_negatives(hdr_linear_bt2020)
+    if base_primaries == 12:
+        return clamp_small_negatives(linear_bt2020_to_display_p3(hdr_linear_bt2020))
     return clamp_small_negatives(linear_bt2020_to_srgb(hdr_linear_bt2020))
 
 

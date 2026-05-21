@@ -14,6 +14,7 @@ from hdr_transcoder.color import (
     CICP_BT2020_PRIMARIES,
     CICP_BT709_MATRIX,
     CICP_BT709_PRIMARIES,
+    CICP_DISPLAY_P3_PRIMARIES,
     CICP_PQ_TRANSFER,
     CICP_SRGB_TRANSFER,
 )
@@ -162,7 +163,7 @@ def encode_gainmap_heic(
         alternate_png.write_bytes(imagecodecs.png_encode(hdr_16bit))
 
         base_cicp = (
-            f"{CICP_BT709_PRIMARIES}/{CICP_SRGB_TRANSFER}/{CICP_BT709_MATRIX}"
+            f"{CICP_DISPLAY_P3_PRIMARIES}/{CICP_SRGB_TRANSFER}/{CICP_BT709_MATRIX}"
             if apple_gainmap_only
             else f"{CICP_BT2020_PRIMARIES}/{CICP_SRGB_TRANSFER}/{CICP_BT2020_MATRIX}"
         )
