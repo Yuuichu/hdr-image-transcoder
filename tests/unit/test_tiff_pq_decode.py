@@ -4,6 +4,9 @@ import struct
 import numpy as np
 import pytest
 
+from hdr_transcoder.color import linear_bt2020_to_srgb
+from hdr_transcoder.config import CICP_BT2020_PRIMARIES
+from hdr_transcoder.cli import convert_single
 from hdr_transcoder.formats.decoder import _read_tiff_cicp, _decode_tiff, decode_to_scrgb
 
 
@@ -153,3 +156,43 @@ class TestDecodeTiffPQ:
         assert 4.5 < peak < 5.5
         assert w == 4
         assert h == 4
+
+    def test_pq_input_can_assume_bt2020_primaries_for_untagged_tiff(self, tmp_path):
+        linear_bt2020_nits = np.empty((4, 4, 3), dtype=np.float32)
+        linear_bt2020_nits[..., 0] = 800.0
+        linear_bt2020_nits[..., 1] = 300.0
+        linear_bt2020_nits[..., 2] = 100.0
+        pq_16bit = _pq_encoded_16bit(linear_bt2020_nits, max_nits=10000.0)
+        raw = _build_tiff_16bit_image(pq_16bit)
+
+        decoded = _decode_tiff(raw, pq_input=True, pq_primaries=CICP_BT2020_PRIMARIES)
+        expected = linear_bt2020_to_srgb(linear_bt2020_nits / 100.0)
+        np.testing.assert_allclose(decoded[..., :3], expected, rtol=0.01, atol=0.02)
+
+        unconverted = _decode_tiff(raw, pq_input=True)
+        assert not np.allclose(decoded[..., :3], unconverted[..., :3], rtol=0.01, atol=0.02)
+
+        tiff_path = tmp_path / "untagged_bt2020_pq.tif"
+        tiff_path.write_bytes(raw)
+        pixels, _, _ = decode_to_scrgb(
+            str(tiff_path),
+            pq_input=True,
+            tiff_pq_primaries=CICP_BT2020_PRIMARIES,
+        )
+        np.testing.assert_allclose(pixels[..., :3], expected, rtol=0.01, atol=0.02)
+
+    def test_bt2020_pq_tiff_flag_rejects_non_tiff(self, tmp_path):
+        import imagecodecs
+
+        png_path = tmp_path / "source.png"
+        png_path.write_bytes(imagecodecs.png_encode(np.zeros((4, 4, 3), dtype=np.uint8)))
+        output_path = tmp_path / "out.jxl"
+
+        with pytest.raises(ValueError, match="--bt2020-pq-tiff can only be used"):
+            convert_single(
+                png_path,
+                output_path,
+                format="jxl",
+                fidelity="master",
+                bt2020_pq_tiff=True,
+            )

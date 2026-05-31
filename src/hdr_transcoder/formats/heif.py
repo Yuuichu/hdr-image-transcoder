@@ -22,9 +22,11 @@ def encode_heif_hdr(pixels_rgb, output_path, quality=100):
     heif_file = pillow_heif.HeifFile()
     height, width = pq_16bit.shape[:2]
     heif_file.add_frombytes("RGB;16", (width, height), pq_16bit.tobytes())
+    # pillow_heif uses -1 for lossless; quality=100 is still lossy for HEVC.
+    heif_quality = -1 if quality >= 100 else quality
     heif_file.save(
         output_path,
-        quality=quality,
+        quality=heif_quality,
         chroma="444",
         save_nclx_profile=True,
         color_primaries=CICP_BT2020_PRIMARIES,

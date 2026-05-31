@@ -19,6 +19,7 @@ python/
 
 tmp_*
 *.tmp
+local-scratch/
 hdr-transcoder-ui-*.png
 hdr-transcoder-updated-ui.png
 post-fix-review-screenshot.png

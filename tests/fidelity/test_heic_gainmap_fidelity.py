@@ -42,6 +42,26 @@ def test_heic_bt2020_base_conversion_changes_primary_samples():
     assert converted[0, 2, 2] < 255
 
 
+def test_apple_gainmap_uses_full_metadata_headroom():
+    """Apple gain map values should be able to reach the advertised headroom."""
+    from tools.libheif.heifgainmaputil_hdr import _compute_apple_gain_map, _srgb_to_linear
+
+    sdr = np.full((4, 4, 3), 128, dtype=np.uint8)
+    sdr_linear = _srgb_to_linear(sdr)
+    hdr_nits = sdr_linear * 4.0 * 100.0
+    hdr_16bit = _pq_encode_16bit(hdr_nits, max_nits=10000.0)
+
+    gainmap, apple_headroom = _compute_apple_gain_map(
+        sdr,
+        hdr_16bit,
+        alternate_headroom=4.0,
+        base_primaries=1,
+    )
+
+    assert math.isclose(apple_headroom, 2.0, abs_tol=0.001)
+    assert int(gainmap.max()) == 255
+
+
 def _pq_encode_16bit(linear_nits, max_nits=10000.0):
     """Encode linear nits values to PQ 16-bit integer."""
     m1 = 0.1593017578125

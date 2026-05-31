@@ -381,7 +381,7 @@ def _decode_gainmap_avif(raw):
                     "-y",
                     "444",
                     "-q",
-                    "95",
+                    "100",
                 ],
                 capture_output=True,
                 text=True,
@@ -782,7 +782,7 @@ def _read_tiff_cicp(raw):
     return result
 
 
-def _decode_tiff(raw, pq_input=False):
+def _decode_tiff(raw, pq_input=False, pq_primaries=None):
     import imagecodecs
 
     cicp = _read_tiff_cicp(raw)
@@ -790,7 +790,10 @@ def _decode_tiff(raw, pq_input=False):
 
     if cicp.get("transfer") == CICP_PQ_TRANSFER or pq_input:
         pq_norm = _normalize_pq_pixels(pixels)
-        return _decode_pq(pq_norm, primaries=cicp.get("primaries"))
+        primaries = cicp.get("primaries")
+        if primaries is None:
+            primaries = pq_primaries
+        return _decode_pq(pq_norm, primaries=primaries)
 
     return _to_float32(pixels, preserve_negative=True)
 
@@ -814,7 +817,7 @@ _DECODERS = {
 }
 
 
-def decode_to_scrgb(filepath, pq_input=False):
+def decode_to_scrgb(filepath, pq_input=False, tiff_pq_primaries=None):
     """Decode a supported image to float32 linear RGBA data."""
     path = Path(filepath)
     fmt = probe_format(filepath)
@@ -827,10 +830,15 @@ def decode_to_scrgb(filepath, pq_input=False):
 
     if decoder is not None:
         try:
-            try:
-                pixels = _ensure_rgba(decoder(raw, pq_input=pq_input))
-            except TypeError:
-                pixels = _ensure_rgba(decoder(raw))
+            if fmt == "tiff":
+                pixels = _ensure_rgba(
+                    decoder(raw, pq_input=pq_input, pq_primaries=tiff_pq_primaries)
+                )
+            else:
+                try:
+                    pixels = _ensure_rgba(decoder(raw, pq_input=pq_input))
+                except TypeError:
+                    pixels = _ensure_rgba(decoder(raw))
             height, width = pixels.shape[:2]
             return pixels, width, height
         except UnsafeMetadataError as primary_error:

@@ -11,6 +11,7 @@ import numpy as np
 
 from hdr_transcoder.config import (
     ALL_OUTPUT_FORMATS,
+    CICP_BT2020_PRIMARIES,
     DEFAULT_NAME_PATTERN,
     FIDELITIES,
     FIDELITY_COMPAT,
@@ -32,7 +33,7 @@ from hdr_transcoder.formats import (
     OUTPUT_FORMATS,
     encode_output,
 )
-from hdr_transcoder.processor import prepare_alternate_hdr, prepare_base_sdr, prepare_base_sdr_display_p3
+from hdr_transcoder.processor import prepare_alternate_hdr, prepare_base_sdr
 from hdr_transcoder.validation import source_peak_headroom as _source_peak_headroom
 from hdr_transcoder.validation import verify_output as _verify_output
 
@@ -205,7 +206,8 @@ def convert_single(input_path, output_path, quality=100, speed=0, max_headroom=N
                    gainmap_headroom_mode=GAINMAP_HEADROOM_SOURCE_PEAK,
                    debug_overlay=False, info_json=False,
                    pq_input=False, heic_rgb_gainmap_only=False,
-                   heic_apple_gainmap_only=False):
+                   heic_apple_gainmap_only=False,
+                   bt2020_pq_tiff=False):
     """Convert a single HDR image to the specified output format."""
     input_path = Path(input_path)
     output_path = Path(output_path)
@@ -219,9 +221,26 @@ def convert_single(input_path, output_path, quality=100, speed=0, max_headroom=N
 
     fmt = probe_format(str(input_path))
     fmt_name = SUPPORTED_FORMATS.get(fmt, (fmt or "unknown", []))[0]
+    tiff_pq_primaries = None
+    if bt2020_pq_tiff:
+        if fmt != "tiff":
+            raise ValueError(
+                "--bt2020-pq-tiff can only be used with true BT.2020 PQ TIFF input; "
+                f"detected {fmt_name}"
+            )
+        pq_input = True
+        tiff_pq_primaries = CICP_BT2020_PRIMARIES
+        print(
+            "  Warning: --bt2020-pq-tiff assumes untagged TIFF RGB samples are "
+            "BT.2020 primaries with PQ/ST.2084 transfer. Use only for known PQ TIFF exports."
+        )
 
     print(f"Decoding: {input_path.name} [{fmt_name}]")
-    hdr, width, height = decode_to_scrgb(str(input_path), pq_input=pq_input)
+    hdr, width, height = decode_to_scrgb(
+        str(input_path),
+        pq_input=pq_input,
+        tiff_pq_primaries=tiff_pq_primaries,
+    )
     _ensure_finite_hdr(hdr, input_path)
     rgb_max = hdr[..., :3].max()
     print(f"  Resolution: {width}x{height}, HDR peak: {rgb_max:.3f}")
@@ -244,11 +263,7 @@ def convert_single(input_path, output_path, quality=100, speed=0, max_headroom=N
         if gainmap_headroom_mode not in GAINMAP_HEADROOM_MODES:
             raise ValueError(f"Unknown gainmap headroom mode: {gainmap_headroom_mode}")
         print(f"  Computing SDR base (headroom={headroom}) and HDR alternate...")
-        sdr = (
-            prepare_base_sdr_display_p3(hdr, headroom=headroom)
-            if output_format == "gainmap-heic" and heic_apple_gainmap_only
-            else prepare_base_sdr(hdr, headroom=headroom)
-        )
+        sdr = prepare_base_sdr(hdr, headroom=headroom)
         alt = prepare_alternate_hdr(hdr)
         base_headroom = None
         alternate_headroom = None
@@ -382,6 +397,8 @@ def main():
                         help="Write a sidecar output.info.json file with inspector and verify metadata")
     parser.add_argument("--pq-input", action="store_true",
                         help="Treat TIFF input as PQ HDR (when CICP metadata is absent)")
+    parser.add_argument("--bt2020-pq-tiff", action="store_true",
+                        help="TIFF-only: treat untagged RGB TIFF samples as BT.2020 PQ HDR. Use only for known PQ TIFF exports.")
     parser.add_argument("--heic-rgb-gainmap-only", action="store_true",
                         help="For gainmap-heic, write only SDR base + ISO RGB gainmap + tmap metadata")
     parser.add_argument("--heic-apple-gainmap-only", action="store_true",
@@ -491,6 +508,7 @@ def main():
                     pq_input=args.pq_input,
                     heic_rgb_gainmap_only=args.heic_rgb_gainmap_only,
                     heic_apple_gainmap_only=args.heic_apple_gainmap_only,
+                    bt2020_pq_tiff=args.bt2020_pq_tiff,
                 )
             except Exception as exc:
                 print(f"  ERROR: {exc}")
@@ -548,6 +566,7 @@ def main():
                     pq_input=args.pq_input,
                     heic_rgb_gainmap_only=args.heic_rgb_gainmap_only,
                     heic_apple_gainmap_only=args.heic_apple_gainmap_only,
+                    bt2020_pq_tiff=args.bt2020_pq_tiff,
                 )
             except Exception as exc:
                 print(f"  ERROR: {exc}")

@@ -109,9 +109,9 @@ def _compute_apple_gain_map(
 ) -> tuple[np.ndarray, float]:
     """Compute an Apple-style single-channel gain map from SDR base and HDR alternate.
 
-    Uses the maximum RGB channel ratio and Rec.709 OETF encoding. Ratios above
-    alternate_headroom are clipped so the gain map remains consistent with the
-    Apple metadata headroom.
+    Uses the maximum RGB channel ratio and Rec.709 OETF encoding. The metadata
+    headroom expands to the image's actual SDR/HDR ratio so the sidecar and XMP
+    describe the same reconstruction range.
     The Apple reconstruction formula is:
         hdr = sdr_linear * (1 + (headroom - 1) * gain_linear)
 
@@ -128,19 +128,20 @@ def _compute_apple_gain_map(
 
     ratio_rgb = np.maximum(hdr_linear, 1e-8) / np.maximum(sdr_linear, 1e-8)
     ratio = np.max(ratio_rgb, axis=-1)
-    headroom = max(alternate_headroom, 1.0)
+    finite_ratio = ratio[np.isfinite(ratio)]
+    ratio_peak = float(np.max(finite_ratio)) if finite_ratio.size else 1.0
+    headroom = max(alternate_headroom, ratio_peak, 1.0)
     gain_linear = (ratio - 1.0) / max(headroom - 1.0, 1e-8)
-    gain_linear = np.clip(gain_linear, 0.0, 0.90)
+    gain_linear = np.clip(gain_linear, 0.0, 1.0)
 
     gain_709 = _rec709_oetf(gain_linear)
-    full_res = (gain_709 * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
-    height, width = full_res.shape[:2]
+    gainmap = (gain_709 * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
+    height, width = gainmap.shape[:2]
     pad_h = height % 2
     pad_w = width % 2
     if pad_h or pad_w:
-        full_res = np.pad(full_res, ((0, pad_h), (0, pad_w)), mode="edge")
-    half_res = full_res.reshape(full_res.shape[0] // 2, 2, full_res.shape[1] // 2, 2).max(axis=(1, 3))
-    return half_res, float(np.log2(max(headroom, 1.0)))
+        gainmap = np.pad(gainmap, ((0, pad_h), (0, pad_w)), mode="edge")
+    return gainmap, float(np.log2(max(headroom, 1.0)))
 
 
 def _compute_iso21496_rgb_gain_map(
