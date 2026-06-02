@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from hdr_transcoder.cli import _source_peak_headroom
-from hdr_transcoder.inspector import inspect_image
+from hdr_transcoder.inspector import _inspect_color_metadata, inspect_image
 
 
 @pytest.mark.quick
@@ -33,6 +33,25 @@ def test_inspector_reports_hdr_fixture_metadata(hdr_jxl_fixture):
     assert math.isclose(info["hdr"]["rgb_max"], 5.003887, abs_tol=0.001)
     assert math.isclose(info["hdr"]["peak_headroom"], 2.323049, abs_tol=0.001)
     assert info["color"]["transfer_label"] == "Linear"
+
+
+@pytest.mark.quick
+def test_inspector_infers_jpegxr_scrgb_color_metadata(tmp_path):
+    sample = tmp_path / "sample.jxr"
+    sample.write_bytes(b"not a real jpeg xr; metadata inference does not decode")
+    warnings = []
+
+    color = _inspect_color_metadata(sample, "jpegxr", warnings)
+
+    assert color["primaries"] == 1
+    assert color["transfer"] == 8
+    assert color["matrix"] == 0
+    assert color["primaries_label"] == "BT.709 / sRGB"
+    assert color["transfer_label"] == "Linear"
+    assert color["matrix_label"] == "RGB identity"
+    assert color["source"] == "JPEG XR scRGB linear (inferred)"
+    assert color["inferred"] is True
+    assert warnings == []
 
 
 @pytest.mark.quick

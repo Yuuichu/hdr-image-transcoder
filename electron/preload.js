@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("hdrTranscoder", {
   scanDirectory: (dirPath) => ipcRenderer.invoke("dialog:scanDirectory", dirPath),
   checkRuntime: () => ipcRenderer.invoke("runtime:check"),
   inspectImages: (filePaths) => ipcRenderer.invoke("image:inspect", filePaths),
+  readInfoJson: (outputPaths) => ipcRenderer.invoke("conversion:readInfoJson", outputPaths),
   startConversion: (options) => ipcRenderer.invoke("conversion:start", options),
   checkOverwrite: (options) => ipcRenderer.invoke("conversion:checkOverwrite", options),
   cancelConversion: () => ipcRenderer.invoke("conversion:cancel"),

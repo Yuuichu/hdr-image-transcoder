@@ -63,6 +63,28 @@ def python_version():
     }
 
 
+def optional_uhdr_status():
+    env_paths = {
+        "HDR_TRANSCODER_UHDR_DLL": os.environ.get("HDR_TRANSCODER_UHDR_DLL"),
+        "UHDR_DLL": os.environ.get("UHDR_DLL"),
+    }
+    for name, value in env_paths.items():
+        if value and Path(value).exists():
+            return {
+                "path": str(Path(value)),
+                "present": True,
+                "source": name,
+                "env": {key: bool(path) for key, path in env_paths.items()},
+            }
+
+    return {
+        "path": str(UHDR_DLL),
+        "present": UHDR_DLL.exists(),
+        "source": "bundled",
+        "env": {key: bool(path) for key, path in env_paths.items()},
+    }
+
+
 def check_runtime_environment():
     missing = missing_tools()
     dep_errors = dependency_errors()
@@ -72,14 +94,7 @@ def check_runtime_environment():
         "pythonVersion": python_version(),
         "missingTools": missing,
         "optionalTools": {
-            "uhdr.dll": {
-                "path": str(UHDR_DLL),
-                "present": UHDR_DLL.exists(),
-                "env": {
-                    "HDR_TRANSCODER_UHDR_DLL": bool(os.environ.get("HDR_TRANSCODER_UHDR_DLL")),
-                    "UHDR_DLL": bool(os.environ.get("UHDR_DLL")),
-                },
-            },
+            "uhdr.dll": optional_uhdr_status(),
         },
         "dependencyErrors": dep_errors,
     }

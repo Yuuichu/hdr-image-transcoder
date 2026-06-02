@@ -1,48 +1,86 @@
 # AGENTS.md
 
-Project guidance for Codex and Spec Kit agents working in this repository.
+Compact guidance for Zap and Codex agents working in this repository.
 
-## Language And Style
+## Language
 
-- Use Chinese for normal user-facing explanations unless the user asks otherwise.
-- Keep development updates concise and practical.
-- For debugging, root-cause analysis, or tradeoff discussions, state assumptions and evidence explicitly.
-- In review mode, lead with concrete findings, regressions, risks, and missing validation.
+Use Chinese for user-facing explanations unless asked otherwise.
 
-## Project Overview
+## Project
 
-This repository is a Windows-first HDR still-image transcoder. The core package
-is `src/hdr_transcoder`, with compatibility entry points at `hdr2avif.py` and
-`jxr2avif.py`.
+Windows-first HDR still-image transcoder. Core package: `src/hdr_transcoder`.
+Entry points: `hdr2avif.py` (CLI), `jxr2avif.py` (backward-compat wrapper).
+Electron GUI in `electron/`. README and CLAUDE.md have detailed usage docs.
 
-Generated images, logs, local binaries, and research checkouts belong under
-`output/` or `local-scratch/`; both are intentionally ignored by git.
+## Architecture Gotchas
 
-## Development Rules
+- **Flat `src/` modules are thin shims.** `src/cli.py`, `src/decoder.py`, etc.
+  re-export from `hdr_transcoder.*`. Add new code to `src/hdr_transcoder/` only.
+- **JXL encoding MUST go through bundled `cjxl.exe`.** Never add an
+  `imagecodecs.jpegxl_encode` fallback — it produces misleading HDR metadata.
+- **Default `.avif` output is gainmap AVIF, not standard AVIF.** Use
+  `--format avif` for standard 10-bit PQ HDR AVIF.
+- **Master fidelity requires `--jxl-mode linear-srgb`** (lossless linear JXL).
+  Non-JXL outputs under master need `--allow-non-master`.
+- **HEIF/AVIF HDR outputs must use Rec.2020 non-constant luminance matrix
+  (`9/16/9`).** Identity matrix produces a red-tinted image on WIC and some
+  viewers. Do NOT switch back to RGB identity matrix.
+- **Validation must stay consistent across all layers** (HTML `min` attributes,
+  renderer `validateOptions`, main process `validateOptions`, Python CLI
+  `_validate_args`). After changing a rule, grep for the old value everywhere.
+- **Do not overwrite input files.** CLI avoids it when default output extension
+  matches input extension; `_converted_name` appends `_converted`.
 
-- Prefer existing helpers in `src/hdr_transcoder` over adding parallel paths.
-- Keep color-space assumptions explicit in code, CLI help, metadata, and tests.
-- Use `--bt2020-pq-tiff` only for known true BT.2020 PQ TIFF exports.
-- Do not commit generated outputs, temporary matrices, local DLLs, screenshots, or downloaded tool trees.
-- After changes that touch encoding, decoding, metadata, or validation, run targeted tests plus the relevant format matrix smoke test.
-
-## Common Commands
+## Commands
 
 ```powershell
-python -m compileall src hdr2avif.py jxr2avif.py scripts\format_matrix_validation.py
-python -m pytest -q
-python -m pytest -m fidelity -q
+# Install
+pip install -r requirements.txt
+npm install
+
+# Syntax check
+python -m compileall src hdr_transcoder hdr2avif.py jxr2avif.py
+node --check electron\main.js electron\preload.js electron\renderer\app.js
+
+# Tests (fidelity tests are skipped by default)
+python -m pytest -q                    # quick tests only
+python -m pytest -m "" -q              # ALL tests
+python -m pytest -m fidelity -q        # fidelity-only
+
+# Runtime self-check (also run after npm run prepack)
+python -m hdr_transcoder.tools_check --pretty
+python -m hdr_transcoder.tools_check --invoke   # also test tool --help outputs
+
+# GUI checks
+npm start
+npm run prepack
+
+# Format matrix smoke test (use small dimensions for speed)
 python scripts\format_matrix_validation.py --run-id local-smoke --width 64 --height 40 --quality 100 --speed 8
 ```
 
+## Testing Quirks
+
+- `pytest` default markers skip fidelity and GUI tests. Use `-m ""` to run
+  everything, `-m fidelity` for slow encode/decode round-trips.
+- Tools tests (`-m tools`) require bundled `.exe` files under `tools/`.
+- GUI tests (`-m gui`) use Playwright against the Electron renderer.
+  `page.evaluate()` state is lost on `location.reload()` or navigation —
+  re-inject mocks after every navigation. Forms with `<button type="submit">`
+  need `event.preventDefault()` or they trigger a GET navigation.
+  `browser_select_option` requires the `values` parameter (array of strings).
+
+## PowerShell Warning
+
+`Stop-Process -Name "powershell"` kills ALL PowerShell sessions. Target
+specific PIDs or filter on the command line.
+
 ## Spec Kit
 
-Use Spec Kit for larger feature work:
-
-1. Create or select a feature branch named like `001-feature-name`.
-2. Keep feature artifacts in `specs/<branch-name>/`.
-3. Maintain `spec.md`, `plan.md`, and `tasks.md` before implementation changes.
-4. Update `.specify/memory/constitution.md` when project-wide engineering rules change.
+For feature work:
+1. Create branch `NNN-feature-name` with matching `specs/<branch>/`.
+2. Maintain `spec.md`, `plan.md`, `tasks.md` before implementation.
+3. Update `.specify/memory/constitution.md` when engineering rules change.
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,

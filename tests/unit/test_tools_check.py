@@ -1,6 +1,6 @@
 import pytest
 
-from hdr_transcoder.tools import REQUIRED_TOOLS, check_runtime_environment, check_tool_invocation
+from hdr_transcoder.tools import REQUIRED_TOOLS, check_runtime_environment, check_tool_invocation, optional_uhdr_status
 
 
 @pytest.mark.quick
@@ -27,3 +27,17 @@ def test_bundled_tools_advertise_help():
     helper_output = f"{result['avifgainmaputil_hdr.exe']['stdout']}\n{result['avifgainmaputil_hdr.exe']['stderr']}"
     assert "--base-headroom" in helper_output
     assert "--alternate-headroom" in helper_output
+
+
+@pytest.mark.quick
+def test_optional_uhdr_status_honors_env_path(tmp_path, monkeypatch):
+    dll = tmp_path / "uhdr.dll"
+    dll.write_bytes(b"test")
+    monkeypatch.setenv("HDR_TRANSCODER_UHDR_DLL", str(dll))
+    monkeypatch.delenv("UHDR_DLL", raising=False)
+
+    result = optional_uhdr_status()
+
+    assert result["present"] is True
+    assert result["path"] == str(dll)
+    assert result["source"] == "HDR_TRANSCODER_UHDR_DLL"

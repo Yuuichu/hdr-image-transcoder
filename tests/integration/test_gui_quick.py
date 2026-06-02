@@ -33,3 +33,42 @@ def test_electron_wires_debug_overlay_and_inspector(repo_root):
     assert "debugOverlayInput" in app_js
     assert "infoJsonInput" in app_js
     assert "runtimeStatus" in app_js
+
+
+@pytest.mark.quick
+@pytest.mark.gui
+def test_electron_wires_ultrahdr_workbench_options(repo_root):
+    html = (repo_root / "electron" / "renderer" / "index.html").read_text(encoding="utf-8")
+    main_js = (repo_root / "electron" / "main.js").read_text(encoding="utf-8")
+    preload_js = (repo_root / "electron" / "preload.js").read_text(encoding="utf-8")
+    app_js = (repo_root / "electron" / "renderer" / "app.js").read_text(encoding="utf-8")
+
+    assert "queueList" in html
+    assert "helpContent" in html
+    assert "bt2020PqTiffInput" in html
+    assert "uhdrBackendSelect" in html
+    assert "verifyFidelityInput" in html
+    assert "readInfoJson" in preload_js
+    assert '"--bt2020-pq-tiff"' in main_js
+    assert '"--uhdr-backend"' in main_js
+    assert '"--gainmap-scale"' in main_js
+    assert '"--target-peak-nits"' in main_js
+    assert '"--verify-fidelity"' in main_js
+    assert 'ipcMain.handle("conversion:readInfoJson"' in main_js
+    assert "activeHelpTopic" in app_js
+    assert "logFilter" in app_js
+
+
+@pytest.mark.quick
+@pytest.mark.gui
+def test_renderer_supports_chinese_language_option(repo_root):
+    html = (repo_root / "electron" / "renderer" / "index.html").read_text(encoding="utf-8")
+    app_js = (repo_root / "electron" / "renderer" / "app.js").read_text(encoding="utf-8")
+
+    assert "languageSelect" in html
+    assert 'value="zh-Hans"' in html
+    assert ">中文<" in html
+    assert "HDR 图像转码器" in html
+    assert "const I18N" in app_js
+    assert "setLanguage" in app_js
+    assert "messages.pqTiffWarning" in app_js

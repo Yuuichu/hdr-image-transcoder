@@ -235,6 +235,16 @@ def _inspect_color_metadata(path, fmt, warnings):
                 "source": "avif CICP",
             }
         )
+    elif fmt == "jpegxr":
+        color.update(
+            {
+                "primaries": CICP_BT709_PRIMARIES,
+                "transfer": 8,
+                "matrix": 0,
+                "source": "JPEG XR scRGB linear (inferred)",
+                "inferred": True,
+            }
+        )
     elif fmt == "jpegxl":
         try:
             jxl = _read_jxl_info(raw)
@@ -307,7 +317,7 @@ def inspect_image(path):
     result["detected_format"] = fmt
     result["format_name"] = SUPPORTED_FORMATS.get(fmt, (fmt or "unknown", []))[0]
 
-    if fmt in {"avif", "jpegxl", "heif"}:
+    if fmt in {"avif", "jpegxr", "jpegxl", "heif"}:
         result["color"] = _inspect_color_metadata(path, fmt, warnings)
     if fmt == "avif":
         result["gainmap"] = _inspect_avif_gainmap(path)

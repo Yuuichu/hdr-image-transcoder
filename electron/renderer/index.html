@@ -1,168 +1,272 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hans">
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
-    <title>HDR Image Transcoder</title>
+    <title>HDR 图像转码器</title>
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
     <main class="app-shell">
-      <section class="toolbar">
-        <div>
-          <h1>HDR Image Transcoder</h1>
-          <p class="subtitle">Convert HDR still images with the local Python pipeline.</p>
+      <section class="command-bar">
+        <div class="brand-block">
+          <h1 data-i18n="ui.brandTitle">HDR 图像转码器</h1>
+          <p class="subtitle" data-i18n="ui.brandSubtitle">专业 HDR 静态图像转码与验证工作台。</p>
         </div>
-        <div id="statusBadge" class="status-badge idle">Idle</div>
+        <div class="command-actions">
+          <label class="language-control" for="languageSelect">
+            <span data-i18n="ui.language">语言</span>
+            <select id="languageSelect">
+              <option value="zh-Hans" selected>中文</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+          <button id="pickFilesButton" type="button" data-i18n="ui.addImages">添加图像</button>
+          <button id="pickDirectoryButton" type="button" data-i18n="ui.addFolder">添加文件夹</button>
+          <button id="pickOutputButton" type="button" data-i18n="ui.outputFolder">输出目录</button>
+          <button id="runtimeCheckButton" type="button" data-i18n="ui.selfCheck">运行自检</button>
+          <button id="startButton" form="convertForm" type="submit" class="primary" data-i18n="ui.start">开始</button>
+          <button id="cancelButton" type="button" class="danger" disabled data-i18n="ui.cancel">取消</button>
+          <div id="statusBadge" class="status-badge idle">空闲</div>
+        </div>
       </section>
 
-      <section id="runtimeStatus" class="runtime-status pending">Checking runtime...</section>
+      <section id="runtimeStatus" class="runtime-status pending" data-i18n="messages.checkingRuntime">正在检查运行环境...</section>
 
-      <section class="layout">
-        <form id="convertForm" class="panel">
-          <div class="field-group">
-            <label>Input</label>
-            <div class="button-row">
-              <button id="pickFilesButton" type="button">Choose Images</button>
-              <button id="pickDirectoryButton" type="button">Choose Folder</button>
+      <section class="workspace-grid">
+        <section class="queue-panel panel">
+          <div class="panel-header compact-header">
+            <div>
+              <h2 data-i18n="ui.fileQueue">文件队列</h2>
+              <p id="queueSummary" class="panel-subtitle">未选择图像。</p>
             </div>
-            <div id="inputPath" class="path-display empty">No images selected</div>
+            <button id="clearQueueButton" type="button" class="secondary" data-i18n="ui.clear">清空</button>
+          </div>
+          <div id="queueList" class="queue-list"></div>
+          <div id="queueEmpty" class="empty-state" data-i18n="ui.queueEmpty">添加图像或文件夹后，可在这里检查并转换。</div>
+        </section>
+
+        <form id="convertForm" class="settings-panel panel">
+          <div class="panel-header">
+            <h2 data-i18n="ui.settings">转码设置</h2>
           </div>
 
-          <div class="field-group">
-            <label>Output Folder</label>
-            <div class="button-row">
-              <button id="pickOutputButton" type="button">Choose Folder</button>
-              <button id="clearOutputButton" type="button" class="secondary">Use Default</button>
-            </div>
-            <div id="outputPath" class="path-display empty">Default output location</div>
-          </div>
-
-          <div class="field-grid">
+          <div class="settings-body">
             <div class="field-group">
-              <label for="formatSelect">Output Format</label>
-              <select id="formatSelect" title="Output format for the converted image">
-                <option value="jxl" selected title="JPEG XL master by default: lossless linear scRGB.">JPEG XL Master</option>
-                <option value="avif" title="10-bit PQ HDR AVIF. Display HDR delivery, not a strict master format.">Standard HDR AVIF</option>
-                <option value="heif" title="10-bit PQ HEVC HDR. Display HDR delivery, not a strict master format.">HEIF HDR</option>
-                <option value="ultrahdr" title="JPEG with HDR gain map. Compatibility delivery, not a strict master format.">Ultra HDR JPEG</option>
-                <option value="gainmap" title="Works in SDR viewers and shows HDR on supported displays. Compatibility delivery, not a strict master format.">Gainmap AVIF</option>
-              </select>
-              <div id="fidelityBadge" class="fidelity-badge master">Master</div>
+              <div class="label-row">
+                <label for="outputPath" data-i18n="ui.outputFolder">输出目录</label>
+                <button type="button" class="help-button" data-help="output-naming" data-i18n-aria-label="aria.outputNaming">?</button>
+              </div>
+              <div id="outputPath" class="path-display empty" data-i18n="ui.defaultOutputLocation">默认输出位置</div>
+              <button id="clearOutputButton" type="button" class="text-button" data-i18n="ui.useDefaultOutput">使用默认输出位置</button>
             </div>
 
-            <div class="field-group">
-              <label for="jxlModeSelect">JPEG XL HDR Mode</label>
-              <select id="jxlModeSelect" title="JPEG XL color encoding mode">
-                <option value="rec2020-pq" title="Rec.2020 primaries with PQ transfer. Best for HDR display and sharing.">Display HDR (Rec.2020 PQ)</option>
-                <option value="linear-srgb" selected title="Linear sRGB/scRGB archive mode. Best for reprocessing, not viewer compatibility.">Linear Archive (scRGB)</option>
-              </select>
-              <div class="field-hint">Linear Archive + lossless is the strict master path. Display HDR is for viewing and sharing.</div>
+            <div class="field-grid">
+              <div class="field-group">
+                <div class="label-row">
+                  <label for="formatSelect" data-i18n="ui.outputFormat">输出格式</label>
+                  <button type="button" class="help-button" data-help="format" data-i18n-aria-label="aria.format">?</button>
+                </div>
+                <select id="formatSelect">
+                  <option value="jxl" selected data-i18n="formats.jxl">JPEG XL 母版</option>
+                  <option value="avif" data-i18n="formats.avif">标准 HDR AVIF</option>
+                  <option value="heif" data-i18n="formats.heif">HEIF HDR</option>
+                  <option value="ultrahdr" data-i18n="formats.ultrahdr">Ultra HDR JPEG</option>
+                  <option value="gainmap" data-i18n="formats.gainmap">Gainmap AVIF</option>
+                </select>
+              </div>
+
+              <div class="field-group">
+                <div class="label-row">
+                  <label data-i18n="ui.fidelity">保真模式</label>
+                  <button type="button" class="help-button" data-help="fidelity" data-i18n-aria-label="aria.fidelity">?</button>
+                </div>
+                <div id="fidelityBadge" class="fidelity-badge master">母版</div>
+              </div>
             </div>
 
-            <div class="field-group">
-              <label for="qualityInput" title="Output quality, 0-100. Higher values produce larger files with better fidelity.">Quality</label>
-              <input id="qualityInput" type="number" min="0" max="100" step="1" value="100">
-            </div>
-
-            <div class="field-group">
-              <label for="speedInput" title="Encoder speed, 0-10. 0 = slowest / best compression, 10 = fastest.">Speed</label>
-              <input id="speedInput" type="number" min="0" max="10" step="1" value="0">
-              <div class="field-hint">0 is slowest with best compression efficiency. 10 is fastest. Quality stays controlled by Quality.</div>
-            </div>
-
-            <div class="field-group">
-              <label for="gainmapHeadroomModeSelect" title="Gainmap AVIF headroom metadata mode">
-                Headroom Mode
+            <section id="jxlOptions" class="format-options">
+              <div class="section-title">JPEG XL</div>
+              <div class="field-group">
+                <div class="label-row">
+                  <label for="jxlModeSelect" data-i18n="ui.jxlMode">JPEG XL HDR 模式</label>
+                  <button type="button" class="help-button" data-help="jxl-mode" data-i18n-aria-label="aria.jxlMode">?</button>
+                </div>
+                <select id="jxlModeSelect">
+                  <option value="linear-srgb" selected data-i18n="options.jxlLinear">线性归档 (scRGB)</option>
+                  <option value="rec2020-pq" data-i18n="options.jxlPq">显示 HDR (Rec.2020 PQ)</option>
+                </select>
+              </div>
+              <label class="check-row">
+                <input id="losslessInput" type="checkbox" checked>
+                <span data-i18n="ui.losslessJxl">无损 JPEG XL</span>
+                <button type="button" class="help-button inline-help" data-help="lossless" data-i18n-aria-label="aria.lossless">?</button>
               </label>
-              <select id="gainmapHeadroomModeSelect" title="Source Peak writes the source HDR peak as Alternate headroom. Auto keeps libavif metadata.">
-                <option value="source-peak" selected>Source Peak</option>
-                <option value="auto">Auto</option>
-              </select>
-              <div class="field-hint">Source Peak preserves HDR peak metadata for gain map AVIF. Auto keeps libavif's computed metadata.</div>
-            </div>
+            </section>
 
-            <div class="field-group">
-              <label for="headroomSdrInput" title="SDR base image tonemap headroom in stops. Higher values preserve more highlight detail in the SDR base.">Base Headroom</label>
+            <section id="ultrahdrOptions" class="format-options" hidden>
+              <div class="section-title" data-i18n="ui.uhdrSection">Ultra HDR JPEG</div>
+              <div class="field-grid">
+                <div class="field-group">
+                  <div class="label-row">
+                    <label for="uhdrBackendSelect" data-i18n="ui.uhdrBackend">Ultra HDR 后端</label>
+                    <button type="button" class="help-button" data-help="uhdr-backend" data-i18n-aria-label="aria.uhdrBackend">?</button>
+                  </div>
+                  <select id="uhdrBackendSelect">
+                    <option value="auto" selected data-i18n="options.auto">自动</option>
+                    <option value="imagecodecs" data-i18n="options.imagecodecs">imagecodecs</option>
+                    <option value="libultrahdr" data-i18n="options.libultrahdr">libultrahdr</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <div class="label-row">
+                    <label for="uhdrGainmapScaleInput" data-i18n="ui.gainmapScale">Gainmap 缩放</label>
+                    <button type="button" class="help-button" data-help="uhdr-gainmap-scale" data-i18n-aria-label="aria.gainmapScale">?</button>
+                  </div>
+                  <input id="uhdrGainmapScaleInput" type="number" min="1" max="128" step="1" value="2">
+                </div>
+              </div>
+              <div class="field-group">
+                <div class="label-row">
+                  <label for="uhdrTargetPeakInput" data-i18n="ui.targetPeak">目标峰值亮度 nits</label>
+                  <button type="button" class="help-button" data-help="target-peak" data-i18n-aria-label="aria.targetPeak">?</button>
+                </div>
+                <input id="uhdrTargetPeakInput" type="number" min="203" max="10000" step="1" value="1000">
+              </div>
+              <label class="check-row warning-check">
+                <input id="bt2020PqTiffInput" type="checkbox">
+                <span data-i18n="ui.knownPqTiff">已确认 BT.2020 PQ TIFF 输入</span>
+                <button type="button" class="help-button inline-help" data-help="pq-tiff" data-i18n-aria-label="aria.pqTiff">?</button>
+              </label>
+            </section>
+
+            <section id="gainmapOptions" class="format-options" hidden>
+              <div class="section-title" data-i18n="ui.gainmapSection">Gainmap AVIF</div>
+              <div class="field-group">
+                <div class="label-row">
+                  <label for="gainmapHeadroomModeSelect" data-i18n="ui.headroomMode">Headroom 模式</label>
+                  <button type="button" class="help-button" data-help="gainmap-headroom-mode" data-i18n-aria-label="aria.gainmapHeadroomMode">?</button>
+                </div>
+                <select id="gainmapHeadroomModeSelect">
+                  <option value="source-peak" selected data-i18n="options.sourcePeak">源峰值</option>
+                  <option value="auto" data-i18n="options.auto">自动</option>
+                </select>
+              </div>
+            </section>
+
+            <section id="displayHdrOptions" class="format-options" hidden>
+              <div class="section-title" data-i18n="ui.displayHdrSection">Display HDR</div>
+              <div class="field-note" data-i18n="ui.displayHdrNote">标准 AVIF 和 HEIF HDR 会编码为 Rec.2020 PQ 显示交付文件。</div>
+            </section>
+
+            <div id="headroomOptions" class="field-group" hidden>
+              <div class="label-row">
+                <label for="headroomSdrInput" data-i18n="ui.baseHeadroom">基础图 Headroom</label>
+                <button type="button" class="help-button" data-help="base-headroom" data-i18n-aria-label="aria.baseHeadroom">?</button>
+              </div>
               <input id="headroomSdrInput" type="number" min="0.1" step="0.1" value="2.0">
             </div>
-          </div>
 
-          <label class="check-row" title="Encode with mathematically lossless compression. Only available for JPEG XL output.">
-            <input id="losslessInput" type="checkbox" checked>
-            <span>Lossless JPEG XL</span>
-          </label>
-
-          <label class="check-row" title="Create a sidecar SDR PNG with output image debug information overlaid. The converted output is not modified.">
-            <input id="debugOverlayInput" type="checkbox">
-            <span>Debug Info Overlay</span>
-          </label>
-
-          <label class="check-row" title="Create a sidecar JSON file with format, CICP, headroom, peak, verify, and inspector metadata.">
-            <input id="infoJsonInput" type="checkbox">
-            <span>Output Info JSON</span>
-          </label>
-
-          <div class="subsection">
-            <h2>Output Naming</h2>
-            <div class="naming-grid">
-              <div class="field-group compact">
-                <label for="namePrefixInput">Prefix</label>
-                <input id="namePrefixInput" type="text" placeholder="HDR_">
+            <div class="field-grid">
+              <div class="field-group">
+                <div class="label-row">
+                  <label for="qualityInput" data-i18n="ui.quality">质量</label>
+                  <button type="button" class="help-button" data-help="quality" data-i18n-aria-label="aria.quality">?</button>
+                </div>
+                <input id="qualityInput" type="number" min="0" max="100" step="1" value="100">
               </div>
-              <div class="field-group compact">
-                <label for="nameSuffixInput">Suffix</label>
-                <input id="nameSuffixInput" type="text" placeholder="_converted">
-              </div>
-              <div class="field-group compact">
-                <label for="nameFindInput">Find</label>
-                <input id="nameFindInput" type="text" placeholder="Screenshot">
-              </div>
-              <div class="field-group compact">
-                <label for="nameReplaceInput">Replace With</label>
-                <input id="nameReplaceInput" type="text" placeholder="HDR">
-              </div>
-              <div class="field-group compact wide">
-                <label for="namePatternInput">Rename Pattern</label>
-                <input id="namePatternInput" type="text" value="{name}" placeholder="Forza_HDR_{n}">
-              </div>
-              <div class="field-group compact">
-                <label for="nameStartInput">Start</label>
-                <input id="nameStartInput" type="number" min="0" step="1" value="1">
-              </div>
-              <div class="field-group compact">
-                <label for="namePaddingInput">Padding</label>
-                <input id="namePaddingInput" type="number" min="0" step="1" value="3">
+              <div class="field-group">
+                <div class="label-row">
+                  <label for="speedInput" data-i18n="ui.speed">速度</label>
+                  <button type="button" class="help-button" data-help="speed" data-i18n-aria-label="aria.speed">?</button>
+                </div>
+                <input id="speedInput" type="number" min="0" max="10" step="1" value="0">
               </div>
             </div>
-            <div class="field-hint">Use {name} for the original filename and {n} for numbering. Leave pattern as {name} to keep original names.</div>
-          </div>
 
-          <div class="action-row">
-            <button id="startButton" type="submit" class="primary">Start Conversion</button>
-            <button id="cancelButton" type="button" class="danger" disabled>Cancel</button>
-          </div>
+            <label class="check-row">
+              <input id="verifyFidelityInput" type="checkbox" checked>
+              <span data-i18n="ui.verifyFidelity">验证保真度</span>
+              <button type="button" class="help-button inline-help" data-help="verify-fidelity" data-i18n-aria-label="aria.verifyFidelity">?</button>
+            </label>
 
-          <div id="summary" class="summary">Ready.</div>
+            <label class="check-row">
+              <input id="debugOverlayInput" type="checkbox">
+              <span data-i18n="ui.debugOverlay">调试信息叠加图</span>
+              <button type="button" class="help-button inline-help" data-help="debug-overlay" data-i18n-aria-label="aria.debugOverlay">?</button>
+            </label>
+
+            <label class="check-row">
+              <input id="infoJsonInput" type="checkbox" checked>
+              <span data-i18n="ui.infoJson">输出 Info JSON</span>
+              <button type="button" class="help-button inline-help" data-help="info-json" data-i18n-aria-label="aria.infoJson">?</button>
+            </label>
+
+            <details id="advancedPanel" class="advanced-panel">
+              <summary data-i18n="ui.outputNaming">输出命名</summary>
+              <div class="naming-grid">
+                <div class="field-group compact">
+                  <label for="namePrefixInput" data-i18n="ui.prefix">前缀</label>
+                  <input id="namePrefixInput" type="text" placeholder="HDR_" data-i18n-placeholder="placeholders.prefix">
+                </div>
+                <div class="field-group compact">
+                  <label for="nameSuffixInput" data-i18n="ui.suffix">后缀</label>
+                  <input id="nameSuffixInput" type="text" placeholder="_converted" data-i18n-placeholder="placeholders.suffix">
+                </div>
+                <div class="field-group compact">
+                  <label for="nameFindInput" data-i18n="ui.find">查找</label>
+                  <input id="nameFindInput" type="text" placeholder="Screenshot" data-i18n-placeholder="placeholders.find">
+                </div>
+                <div class="field-group compact">
+                  <label for="nameReplaceInput" data-i18n="ui.replaceWith">替换为</label>
+                  <input id="nameReplaceInput" type="text" placeholder="HDR" data-i18n-placeholder="placeholders.replace">
+                </div>
+                <div class="field-group compact wide">
+                  <label for="namePatternInput" data-i18n="ui.renamePattern">重命名模式</label>
+                  <input id="namePatternInput" type="text" value="{name}" placeholder="Forza_HDR_{n}" data-i18n-placeholder="placeholders.pattern">
+                </div>
+                <div class="field-group compact">
+                  <label for="nameStartInput" data-i18n="ui.startIndex">起始序号</label>
+                  <input id="nameStartInput" type="number" min="0" step="1" value="1">
+                </div>
+                <div class="field-group compact">
+                  <label for="namePaddingInput" data-i18n="ui.padding">补零位数</label>
+                  <input id="namePaddingInput" type="number" min="0" step="1" value="3">
+                </div>
+              </div>
+            </details>
+
+            <div id="settingsWarning" class="settings-warning" hidden></div>
+            <div id="summary" class="summary">就绪。</div>
+          </div>
         </form>
 
-        <section class="side-column">
-          <section class="info-panel">
-            <div class="panel-header">
-              <h2>Image Info</h2>
-            </div>
-            <div id="imageInfoContent" class="image-info-content empty">Select image files to inspect technical metadata.</div>
-          </section>
-
-          <section class="log-panel">
-            <div class="log-header">
-              <h2>Log</h2>
-              <button id="clearLogButton" type="button" class="secondary">Clear</button>
-            </div>
-            <pre id="logOutput" class="log-output"></pre>
-          </section>
+        <section class="inspector-panel panel">
+          <div class="panel-header">
+            <h2 data-i18n="ui.inspector">检查器</h2>
+          </div>
+          <div id="helpContent" class="help-content empty">点击选项旁边的 ? 查看说明。</div>
+          <div id="imageInfoContent" class="image-info-content empty">选择队列中的图像以检查技术元数据。</div>
+          <div id="outputReportContent" class="output-report-content empty">启用 Info JSON 后，转换报告会显示在这里。</div>
         </section>
+      </section>
+
+      <section id="logDrawer" class="log-drawer collapsed">
+        <div class="log-header">
+          <div>
+            <h2 data-i18n="ui.log">日志</h2>
+            <p id="logSummary" class="panel-subtitle">暂无日志。</p>
+          </div>
+          <div class="log-actions">
+            <button type="button" class="filter-button active" data-log-filter="all" data-i18n="ui.all">全部</button>
+            <button type="button" class="filter-button" data-log-filter="warning" data-i18n="ui.warnings">警告</button>
+            <button type="button" class="filter-button" data-log-filter="error" data-i18n="ui.errors">错误</button>
+            <button id="clearLogButton" type="button" class="secondary" data-i18n="ui.clear">清空</button>
+            <button id="logToggleButton" type="button" class="secondary" data-i18n="ui.expand">展开</button>
+          </div>
+        </div>
+        <pre id="logOutput" class="log-output"></pre>
       </section>
     </main>
 

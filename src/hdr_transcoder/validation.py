@@ -15,6 +15,7 @@ from hdr_transcoder.config import (
     GAINMAP_DECODE_PEAK_TOLERANCE_STOPS,
     GAINMAP_HEADROOM_TOLERANCE_STOPS,
     JXL_MASTER_PEAK_TOLERANCE_SCRGB,
+    ULTRAHDR_DECODE_PEAK_TOLERANCE_STOPS,
 )
 from hdr_transcoder.formats.decoder import _read_avif_cicp, _read_jxl_info, decode_to_scrgb
 from hdr_transcoder.formats.jxl import JXL_MODE_LINEAR_SRGB, JXL_MODE_REC2020_PQ
@@ -279,7 +280,11 @@ def verify_output(source_pixels, output_path, output_format, jxl_mode):
         result["checks"]["peak"] = verify_peak_stops(source_pixels, output_path)
     elif output_format == "ultrahdr":
         result["checks"]["metadata"] = verify_ultrahdr_metadata(output_path)
-        result["checks"]["peak"] = verify_peak(source_pixels, output_path)
+        result["checks"]["peak"] = verify_peak_stops(
+            source_pixels,
+            output_path,
+            tolerance_stops=ULTRAHDR_DECODE_PEAK_TOLERANCE_STOPS,
+        )
     else:
         result["checks"]["peak"] = verify_peak(source_pixels, output_path)
     return result

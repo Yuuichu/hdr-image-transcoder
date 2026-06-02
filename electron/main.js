@@ -29,6 +29,7 @@ const PYTHON_EXE = resolvePythonExe();
 const JXL_MODES = ["rec2020-pq", "linear-srgb"];
 const FIDELITY_MODES = ["master", "display", "compat"];
 const GAINMAP_HEADROOM_MODES = ["source-peak", "auto"];
+const UHDR_BACKENDS = ["auto", "imagecodecs", "libultrahdr"];
 const DEFAULT_NAME_PATTERN = "{name}";
 const INVALID_FILENAME_RE = /[<>:"/\\|?*\x00-\x1f]/g;
 const WINDOW_MARGIN = 80;
@@ -371,6 +372,17 @@ function buildArgs(options) {
   if (options.infoJson) {
     args.push("--info-json");
   }
+  if (options.verifyFidelity) {
+    args.push("--verify-fidelity");
+  }
+  if (options.bt2020PqTiff) {
+    args.push("--bt2020-pq-tiff");
+  }
+  if (options.format === "ultrahdr") {
+    args.push("--uhdr-backend", options.uhdrBackend || "auto");
+    args.push("--gainmap-scale", String(options.uhdrGainmapScale ?? 2));
+    args.push("--target-peak-nits", String(options.uhdrTargetPeakNits ?? 1000));
+  }
 
   appendNamingArgs(args, options);
 
@@ -405,17 +417,34 @@ function validateOptions(options) {
   if (!GAINMAP_HEADROOM_MODES.includes(options.gainmapHeadroomMode || "source-peak")) {
     throw new Error("Unknown gainmap headroom mode.");
   }
+  if (!UHDR_BACKENDS.includes(options.uhdrBackend || "auto")) {
+    throw new Error("Unknown Ultra HDR backend.");
+  }
   if (options.debugOverlay != null && typeof options.debugOverlay !== "boolean") {
     throw new Error("Debug overlay must be true or false.");
   }
   if (options.infoJson != null && typeof options.infoJson !== "boolean") {
     throw new Error("Info JSON must be true or false.");
   }
+  if (options.verifyFidelity != null && typeof options.verifyFidelity !== "boolean") {
+    throw new Error("Verify fidelity must be true or false.");
+  }
+  if (options.bt2020PqTiff != null && typeof options.bt2020PqTiff !== "boolean") {
+    throw new Error("BT.2020 PQ TIFF mode must be true or false.");
+  }
   if (!Number.isInteger(options.quality) || options.quality < 0 || options.quality > 100) {
     throw new Error("Quality must be between 0 and 100.");
   }
   if (!Number.isInteger(options.speed) || options.speed < 0 || options.speed > 10) {
     throw new Error("Speed must be between 0 and 10.");
+  }
+  const uhdrGainmapScale = options.uhdrGainmapScale ?? 2;
+  if (!Number.isInteger(uhdrGainmapScale) || uhdrGainmapScale < 1 || uhdrGainmapScale > 128) {
+    throw new Error("Ultra HDR gainmap scale must be between 1 and 128.");
+  }
+  const uhdrTargetPeakNits = options.uhdrTargetPeakNits ?? 1000;
+  if (typeof uhdrTargetPeakNits !== "number" || uhdrTargetPeakNits < 203 || uhdrTargetPeakNits > 10000) {
+    throw new Error("Ultra HDR target peak must be between 203 and 10000 nits.");
   }
   if (typeof options.headroom !== "number" || options.headroom <= 0) {
     throw new Error("Base headroom must be greater than 0.");
@@ -478,7 +507,8 @@ ipcMain.handle("dialog:scanDirectory", async (_event, directoryPath) => {
     const entries = fs.readdirSync(directoryPath, { withFileTypes: true });
     const files = entries
       .filter((e) => e.isFile() && INPUT_EXTENSIONS.includes(path.extname(e.name).toLowerCase().replace(".", "")))
-      .map((e) => e.name);
+      .map((e) => ({ name: e.name, path: path.join(directoryPath, e.name) }))
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     return { count: files.length, files };
   } catch {
     return { count: 0, files: [], error: "Unable to scan directory." };
@@ -535,7 +565,16 @@ function computeOutputPaths(options) {
 
   // Single file mode
   const outputPath = resolveOutputPath(options.inputPath, options.outputDir, options.format, options.inputMode);
-  return outputPath ? appendInfoJsonPaths([outputPath], options) : [];
+  if (outputPath) {
+    return appendInfoJsonPaths([outputPath], options);
+  }
+
+  const parsed = path.parse(options.inputPath);
+  const defaultPath = path.join(parsed.dir, `${parsed.name}${ext}`);
+  const safePath = isSamePath(options.inputPath, defaultPath)
+    ? path.join(parsed.dir, `${parsed.name}_converted${ext}`)
+    : defaultPath;
+  return appendInfoJsonPaths([safePath], options);
 }
 
 ipcMain.handle("conversion:checkOverwrite", async (_event, options) => {
@@ -550,6 +589,40 @@ ipcMain.handle("conversion:checkOverwrite", async (_event, options) => {
   return { existing };
 });
 
+function infoJsonPathForOutput(outputPath) {
+  if (path.extname(outputPath).toLowerCase() === ".json") {
+    return outputPath;
+  }
+  const parsed = path.parse(outputPath);
+  return path.join(parsed.dir, `${parsed.name}.info.json`);
+}
+
+ipcMain.handle("conversion:readInfoJson", async (_event, outputPaths) => {
+  if (!Array.isArray(outputPaths)) {
+    return [];
+  }
+  const sidecars = [...new Set(outputPaths
+    .filter((p) => typeof p === "string" && p)
+    .map(infoJsonPathForOutput))];
+  const reports = [];
+  for (const sidecar of sidecars) {
+    if (!fs.existsSync(sidecar)) {
+      continue;
+    }
+    try {
+      reports.push(JSON.parse(fs.readFileSync(sidecar, "utf8")));
+    } catch (error) {
+      reports.push({
+        path: sidecar,
+        format: "info-json",
+        verify: { requested: false, ok: false },
+        error: error && error.message ? error.message : String(error),
+      });
+    }
+  }
+  return reports;
+});
+
 ipcMain.handle("conversion:start", async (_event, options) => {
   validateOptions(options);
 
@@ -558,6 +631,7 @@ ipcMain.handle("conversion:start", async (_event, options) => {
   }
 
   const { args, outputPath } = buildArgs(options);
+  const outputPaths = computeOutputPaths(options);
   cancelRequested = false;
   cancelForceUsed = false;
   clearCancelForceTimer();
@@ -597,6 +671,7 @@ ipcMain.handle("conversion:start", async (_event, options) => {
       canceled: false,
       exitCode: null,
       outputPath,
+      outputPaths,
       message,
     });
   });
@@ -612,11 +687,12 @@ ipcMain.handle("conversion:start", async (_event, options) => {
       canceled,
       exitCode,
       outputPath,
+      outputPaths,
       message: canceled ? "Conversion canceled." : exitCode === 0 ? "Conversion finished." : `Conversion failed with exit code ${exitCode}.`,
     });
   });
 
-  return { started: true, outputPath };
+  return { started: true, outputPath, outputPaths };
 });
 
 ipcMain.handle("conversion:cancel", async () => {
