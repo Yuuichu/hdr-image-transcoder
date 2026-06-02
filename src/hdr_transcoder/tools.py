@@ -1,12 +1,13 @@
 """Bundled tool paths and runtime self-checks."""
 import importlib
 import json
+import os
 import platform
 import subprocess
 import sys
 from pathlib import Path
 
-from hdr_transcoder.config import LIBAVIF_DIR, LIBHEIF_DIR, LIBJXL_DIR, PROJECT_ROOT
+from hdr_transcoder.config import LIBAVIF_DIR, LIBHEIF_DIR, LIBJXL_DIR, LIBULTRAHDR_DIR, PROJECT_ROOT
 
 AVIFGAINMAPUTIL = LIBAVIF_DIR / "avifgainmaputil.exe"
 AVIFGAINMAPUTIL_HDR = LIBAVIF_DIR / "avifgainmaputil_hdr.exe"
@@ -16,6 +17,7 @@ CJXL = LIBJXL_DIR / "cjxl.exe"
 DJXL = LIBJXL_DIR / "djxl.exe"
 JXLINFO = LIBJXL_DIR / "jxlinfo.exe"
 HEIFGAINMAPUTIL_HDR = LIBHEIF_DIR / "heifgainmaputil_hdr.py"
+UHDR_DLL = LIBULTRAHDR_DIR / "uhdr.dll"
 
 REQUIRED_TOOLS = {
     "avifgainmaputil.exe": AVIFGAINMAPUTIL,
@@ -69,6 +71,16 @@ def check_runtime_environment():
         "projectRoot": str(PROJECT_ROOT),
         "pythonVersion": python_version(),
         "missingTools": missing,
+        "optionalTools": {
+            "uhdr.dll": {
+                "path": str(UHDR_DLL),
+                "present": UHDR_DLL.exists(),
+                "env": {
+                    "HDR_TRANSCODER_UHDR_DLL": bool(os.environ.get("HDR_TRANSCODER_UHDR_DLL")),
+                    "UHDR_DLL": bool(os.environ.get("UHDR_DLL")),
+                },
+            },
+        },
         "dependencyErrors": dep_errors,
     }
 

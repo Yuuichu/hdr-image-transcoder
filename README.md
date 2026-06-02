@@ -12,6 +12,7 @@ JPEG XL, gain map AVIF, Ultra HDR JPEG, standard 10-bit PQ AVIF, and HEIF HDR.
 - Convert HDR images to lossless linear JPEG XL (`.jxl`) by default
 - Export Rec.2020 PQ JPEG XL HDR (`.jxl`)
 - Export Ultra HDR JPEG (`.jpg` / `.jpeg`)
+- Export known BT.2020 PQ TIFF to Apple-oriented Ultra HDR JPEG through optional `libultrahdr`
 - Export standard 10-bit PQ HDR AVIF (`.avif` with `--format avif`)
 - Export HEIF HDR (`.heic` / `.heif`)
 - Batch convert a whole directory
@@ -43,7 +44,7 @@ JPEG XL, gain map AVIF, Ultra HDR JPEG, standard 10-bit PQ AVIF, and HEIF HDR.
 | JPEG XL Master | `.jxl` | default, `--fidelity master` |
 | JPEG XL Display HDR | `.jxl` | `--format jxl --fidelity display --jxl-mode rec2020-pq` |
 | Gain map AVIF | `.avif` | `--format gainmap --fidelity compat` |
-| Ultra HDR JPEG | `.jpg`, `.jpeg` | output path ending in `.jpg` / `.jpeg` with `--fidelity compat`, or `--format ultrahdr --fidelity compat` |
+| Ultra HDR JPEG | `.jpg`, `.jpeg` | output path ending in `.jpg` / `.jpeg` with `--fidelity compat`, or `--format ultrahdr --fidelity compat`; known PQ TIFF path adds `--bt2020-pq-tiff --uhdr-backend libultrahdr` |
 | Standard PQ HDR AVIF | `.avif` | `--format avif --fidelity display` |
 | HEIF HDR | `.heic`, `.heif` | output path ending in `.heic` / `.heif` with `--fidelity display`, or `--format heif --fidelity display` |
 
@@ -80,6 +81,12 @@ encoding and verification. Run a local self-check with:
 ```powershell
 python -m hdr_transcoder.tools_check --pretty
 ```
+
+Ultra HDR JPEG can use the built-in `imagecodecs` path. The dedicated known
+BT.2020 PQ TIFF path requires an optional `libultrahdr` DLL. Point the tool at
+the DLL with `HDR_TRANSCODER_UHDR_DLL`, `UHDR_DLL`, or place it at
+`tools/libultrahdr/uhdr.dll`. The DLL is treated as a local runtime dependency
+and is not committed by default.
 
 ## Usage
 
@@ -134,6 +141,18 @@ Write 10-bit PQ HDR HEIF:
 python hdr2avif.py input.jxr output.heic --fidelity display
 python hdr2avif.py input.jxr output.heif --format heif --fidelity display
 ```
+
+Convert a known true BT.2020 PQ TIFF to Apple-oriented Ultra HDR JPEG:
+
+```powershell
+$env:HDR_TRANSCODER_UHDR_DLL = "C:\Path\To\uhdr.dll"
+python hdr2avif.py input_bt2020_pq.tif output_uhdr.jpg --format ultrahdr --fidelity compat --bt2020-pq-tiff --uhdr-backend libultrahdr --gainmap-scale 2 --target-peak-nits 1000 --verify-fidelity --info-json
+```
+
+`--bt2020-pq-tiff` is a user assertion. Use it only for TIFF files whose RGB
+samples are known to be BT.2020 primaries with PQ/ST.2084 transfer. With
+`--uhdr-backend auto`, the CLI prefers `libultrahdr` when available and warns
+before falling back to the legacy `imagecodecs` path.
 
 Batch convert a directory:
 
@@ -305,7 +324,8 @@ src/hdr_transcoder/   Main Python package
   formats/avif.py     Standard AVIF encoder
   formats/gainmap.py  Gain map AVIF encoder using avifgainmaputil_hdr
   formats/heif.py     HEIF encoder
-  formats/ultrahdr.py Ultra HDR JPEG encoder
+  formats/ultrahdr.py Ultra HDR JPEG encoder and backend dispatch
+  formats/ultrahdr_lib.py Optional libultrahdr backend for known PQ TIFF input
 tests/unit/           Fast unit and import compatibility tests
 tests/integration/    GUI wiring tests
 tests/fidelity/       Slower encode/decode fidelity tests

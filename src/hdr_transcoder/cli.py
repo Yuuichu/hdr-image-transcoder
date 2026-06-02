@@ -22,6 +22,15 @@ from hdr_transcoder.config import (
     INPUT_EXTENSIONS,
     MASTER_FORMAT,
     TIER1_FORMATS,
+    ULTRAHDR_BACKEND_AUTO,
+    ULTRAHDR_BACKEND_IMAGECODECS,
+    ULTRAHDR_BACKEND_LIBULTRAHDR,
+    ULTRAHDR_BACKENDS,
+    ULTRAHDR_DEFAULT_GAINMAP_GAMMA,
+    ULTRAHDR_DEFAULT_GAINMAP_SCALE,
+    ULTRAHDR_DEFAULT_TARGET_PEAK_NITS,
+    ULTRAHDR_PROFILE_APPLE_P3,
+    ULTRAHDR_PROFILES,
 )
 from hdr_transcoder.formats.gainmap import encode_gainmap_avif, encode_gainmap_heic
 from hdr_transcoder.formats.decoder import SUPPORTED_FORMATS, decode_to_scrgb, probe_format
@@ -33,6 +42,8 @@ from hdr_transcoder.formats import (
     OUTPUT_FORMATS,
     encode_output,
 )
+from hdr_transcoder.formats.ultrahdr import encode_ultrahdr_bt2020_pq_tiff
+from hdr_transcoder.formats.ultrahdr_lib import is_libultrahdr_available
 from hdr_transcoder.processor import prepare_alternate_hdr, prepare_base_sdr
 from hdr_transcoder.validation import source_peak_headroom as _source_peak_headroom
 from hdr_transcoder.validation import verify_output as _verify_output
@@ -207,7 +218,12 @@ def convert_single(input_path, output_path, quality=100, speed=0, max_headroom=N
                    debug_overlay=False, info_json=False,
                    pq_input=False, heic_rgb_gainmap_only=False,
                    heic_apple_gainmap_only=False,
-                   bt2020_pq_tiff=False):
+                   bt2020_pq_tiff=False,
+                   uhdr_backend="auto",
+                   uhdr_profile=ULTRAHDR_PROFILE_APPLE_P3,
+                   uhdr_gainmap_scale=ULTRAHDR_DEFAULT_GAINMAP_SCALE,
+                   uhdr_gainmap_gamma=ULTRAHDR_DEFAULT_GAINMAP_GAMMA,
+                   uhdr_target_peak_nits=ULTRAHDR_DEFAULT_TARGET_PEAK_NITS):
     """Convert a single HDR image to the specified output format."""
     input_path = Path(input_path)
     output_path = Path(output_path)
@@ -249,16 +265,60 @@ def convert_single(input_path, output_path, quality=100, speed=0, max_headroom=N
         label = OUTPUT_FORMATS[output_format][0]
         fidelity_label = "master" if output_format == "jxl" and jxl_mode == JXL_MODE_LINEAR_SRGB and lossless else fidelity
         print(f"  Encoding {label} (quality={quality}, fidelity={fidelity_label})...")
-        encode_output(
-            hdr,
-            str(output_path),
-            format=output_format,
-            quality=quality,
-            speed=speed,
-            lossless=lossless,
-            headroom=headroom,
-            jxl_mode=jxl_mode,
+        use_dedicated_uhdr_pq_tiff = (
+            output_format == "ultrahdr"
+            and bt2020_pq_tiff
+            and (
+                uhdr_backend == ULTRAHDR_BACKEND_LIBULTRAHDR
+                or (
+                    uhdr_backend == ULTRAHDR_BACKEND_AUTO
+                    and is_libultrahdr_available()
+                )
+            )
         )
+        if use_dedicated_uhdr_pq_tiff:
+            print(
+                "  Ultra HDR profile: apple-p3 "
+                f"(backend={uhdr_backend}, gainmap_scale={uhdr_gainmap_scale}, "
+                f"target_peak_nits={uhdr_target_peak_nits:g})"
+            )
+            encode_ultrahdr_bt2020_pq_tiff(
+                input_path,
+                output_path,
+                quality=quality,
+                backend=uhdr_backend,
+                gainmap_scale=uhdr_gainmap_scale,
+                gainmap_gamma=uhdr_gainmap_gamma,
+                target_peak_nits=uhdr_target_peak_nits,
+            )
+        else:
+            effective_uhdr_backend = uhdr_backend
+            if output_format == "ultrahdr" and bt2020_pq_tiff:
+                if uhdr_backend == ULTRAHDR_BACKEND_LIBULTRAHDR:
+                    raise FileNotFoundError(
+                        "Dedicated BT.2020 PQ TIFF Ultra HDR encoding requires libultrahdr. "
+                        "Set HDR_TRANSCODER_UHDR_DLL or place uhdr.dll in tools/libultrahdr."
+                    )
+                if uhdr_backend == ULTRAHDR_BACKEND_AUTO:
+                    print(
+                        "  Warning: libultrahdr was not found; falling back to imagecodecs "
+                        "Ultra HDR instead of the dedicated Display P3 PQ TIFF pipeline."
+                    )
+                    effective_uhdr_backend = ULTRAHDR_BACKEND_IMAGECODECS
+            encode_output(
+                hdr,
+                str(output_path),
+                format=output_format,
+                quality=quality,
+                speed=speed,
+                lossless=lossless,
+                headroom=headroom,
+                jxl_mode=jxl_mode,
+                uhdr_backend=effective_uhdr_backend,
+                uhdr_gainmap_scale=uhdr_gainmap_scale,
+                uhdr_gainmap_gamma=uhdr_gainmap_gamma,
+                uhdr_target_peak_nits=uhdr_target_peak_nits,
+            )
     else:
         if gainmap_headroom_mode not in GAINMAP_HEADROOM_MODES:
             raise ValueError(f"Unknown gainmap headroom mode: {gainmap_headroom_mode}")
@@ -351,6 +411,16 @@ def _validate_args(parser, args):
         parser.error("--heic-apple-gainmap-only can only be used with --format gainmap-heic")
     if args.heic_rgb_gainmap_only and args.heic_apple_gainmap_only:
         parser.error("--heic-rgb-gainmap-only and --heic-apple-gainmap-only are mutually exclusive")
+    if args.uhdr_backend not in ULTRAHDR_BACKENDS:
+        parser.error(f"--uhdr-backend must be one of: {', '.join(sorted(ULTRAHDR_BACKENDS))}")
+    if args.uhdr_profile not in ULTRAHDR_PROFILES:
+        parser.error(f"--uhdr-profile must be one of: {', '.join(sorted(ULTRAHDR_PROFILES))}")
+    if args.uhdr_gainmap_scale < 1 or args.uhdr_gainmap_scale > 128:
+        parser.error("--gainmap-scale must be between 1 and 128")
+    if args.uhdr_gainmap_gamma <= 0:
+        parser.error("--gainmap-gamma must be > 0")
+    if args.uhdr_target_peak_nits < 203 or args.uhdr_target_peak_nits > 10000:
+        parser.error("--target-peak-nits must be between 203 and 10000")
     if args.name_start < 0:
         parser.error("--name-start must be >= 0")
     if args.name_padding < 0:
@@ -399,6 +469,19 @@ def main():
                         help="Treat TIFF input as PQ HDR (when CICP metadata is absent)")
     parser.add_argument("--bt2020-pq-tiff", action="store_true",
                         help="TIFF-only: treat untagged RGB TIFF samples as BT.2020 PQ HDR. Use only for known PQ TIFF exports.")
+    parser.add_argument("--uhdr-backend", choices=sorted(ULTRAHDR_BACKENDS), default="auto",
+                        help="Ultra HDR backend: auto prefers libultrahdr when available, imagecodecs is the legacy fallback")
+    parser.add_argument("--uhdr-profile", choices=sorted(ULTRAHDR_PROFILES), default=ULTRAHDR_PROFILE_APPLE_P3,
+                        help="Ultra HDR color/compatibility profile. apple-p3 uses Display P3 HDR/SDR renditions.")
+    parser.add_argument("--gainmap-scale", dest="uhdr_gainmap_scale", type=int,
+                        default=ULTRAHDR_DEFAULT_GAINMAP_SCALE,
+                        help="Ultra HDR gain map downscale factor 1-128 (default: 2)")
+    parser.add_argument("--gainmap-gamma", dest="uhdr_gainmap_gamma", type=float,
+                        default=ULTRAHDR_DEFAULT_GAINMAP_GAMMA,
+                        help="Ultra HDR gain map encoding gamma (default: 1.0)")
+    parser.add_argument("--target-peak-nits", dest="uhdr_target_peak_nits", type=float,
+                        default=ULTRAHDR_DEFAULT_TARGET_PEAK_NITS,
+                        help="Ultra HDR target display peak in nits, 203-10000 (default: 1000)")
     parser.add_argument("--heic-rgb-gainmap-only", action="store_true",
                         help="For gainmap-heic, write only SDR base + ISO RGB gainmap + tmap metadata")
     parser.add_argument("--heic-apple-gainmap-only", action="store_true",
@@ -443,7 +526,7 @@ def main():
         for key, (name, exts) in OUTPUT_FORMATS.items():
             if key == "ultrahdr":
                 strategy = "Compat"
-                best = "max compatibility"
+                best = "Apple/Android, PQ TIFF via --bt2020-pq-tiff"
             elif key == "gainmap-heic":
                 strategy = "Compat"
                 best = "Apple ecosystem, HEIF gainmap"
@@ -509,6 +592,11 @@ def main():
                     heic_rgb_gainmap_only=args.heic_rgb_gainmap_only,
                     heic_apple_gainmap_only=args.heic_apple_gainmap_only,
                     bt2020_pq_tiff=args.bt2020_pq_tiff,
+                    uhdr_backend=args.uhdr_backend,
+                    uhdr_profile=args.uhdr_profile,
+                    uhdr_gainmap_scale=args.uhdr_gainmap_scale,
+                    uhdr_gainmap_gamma=args.uhdr_gainmap_gamma,
+                    uhdr_target_peak_nits=args.uhdr_target_peak_nits,
                 )
             except Exception as exc:
                 print(f"  ERROR: {exc}")
@@ -567,6 +655,11 @@ def main():
                     heic_rgb_gainmap_only=args.heic_rgb_gainmap_only,
                     heic_apple_gainmap_only=args.heic_apple_gainmap_only,
                     bt2020_pq_tiff=args.bt2020_pq_tiff,
+                    uhdr_backend=args.uhdr_backend,
+                    uhdr_profile=args.uhdr_profile,
+                    uhdr_gainmap_scale=args.uhdr_gainmap_scale,
+                    uhdr_gainmap_gamma=args.uhdr_gainmap_gamma,
+                    uhdr_target_peak_nits=args.uhdr_target_peak_nits,
                 )
             except Exception as exc:
                 print(f"  ERROR: {exc}")

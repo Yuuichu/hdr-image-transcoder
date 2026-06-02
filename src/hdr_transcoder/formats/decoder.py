@@ -678,14 +678,22 @@ def _decode_ultrahdr(raw):
     """Decode Ultra HDR JPEG and reconstruct a best-effort HDR image."""
     import imagecodecs
 
+    def normalize_uhdr_white(pixels):
+        # libultrahdr's legacy hdrgm path reports HDR values relative to the
+        # Ultra HDR SDR white convention (~200 nits). Internally we use scRGB
+        # where 1.0 is 100 nits, so normalize only that explicit metadata path.
+        if b"hdrgm:" in raw:
+            return pixels * 2.0
+        return pixels
+
     result = imagecodecs.ultrahdr_decode(raw)
     if isinstance(result, tuple):
         sdr_base = _to_float32(result[0])
         gainmap = _to_float32(result[1]) if len(result) > 1 else None
         if gainmap is not None:
-            return sdr_base * gainmap
-        return sdr_base
-    return _to_float32(result)
+            return normalize_uhdr_white(sdr_base * gainmap)
+        return normalize_uhdr_white(sdr_base)
+    return normalize_uhdr_white(_to_float32(result))
 
 
 def _decode_png(raw):

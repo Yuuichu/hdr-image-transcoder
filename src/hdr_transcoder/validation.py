@@ -250,6 +250,16 @@ def verify_gainmap_alternate_color(output_path):
     return cicp
 
 
+def verify_ultrahdr_metadata(output_path):
+    from hdr_transcoder.inspector import _inspect_ultrahdr_gainmap
+
+    gainmap = _inspect_ultrahdr_gainmap(output_path)
+    if not gainmap.get("present"):
+        raise ValueError(f"Fidelity verify failed: Ultra HDR gain map metadata not detected: {gainmap}")
+    print("  Fidelity verify: Ultra HDR gain map metadata detected")
+    return gainmap
+
+
 def verify_output(source_pixels, output_path, output_format, jxl_mode):
     result = {"ok": True, "checks": {}}
     if output_format == "jxl":
@@ -267,6 +277,9 @@ def verify_output(source_pixels, output_path, output_format, jxl_mode):
         result["checks"]["headroom"] = verify_heic_gainmap_headroom(source_pixels, output_path)
         result["checks"]["alternateColor"] = verify_heic_gainmap_alternate_color(output_path)
         result["checks"]["peak"] = verify_peak_stops(source_pixels, output_path)
+    elif output_format == "ultrahdr":
+        result["checks"]["metadata"] = verify_ultrahdr_metadata(output_path)
+        result["checks"]["peak"] = verify_peak(source_pixels, output_path)
     else:
         result["checks"]["peak"] = verify_peak(source_pixels, output_path)
     return result

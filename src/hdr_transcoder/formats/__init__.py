@@ -39,7 +39,9 @@ _ENCODERS = {
 
 def encode_output(pixels, output_path, format=None, quality=100, speed=0,
                   lossless=False, effort=7, headroom=2.0,
-                  jxl_mode=JXL_MODE_REC2020_PQ):
+                  jxl_mode=JXL_MODE_REC2020_PQ, uhdr_backend="auto",
+                  uhdr_gainmap_scale=2, uhdr_gainmap_gamma=1.0,
+                  uhdr_target_peak_nits=1000.0):
     """Encode float32 scRGB (H, W, >=3) to a Tier-1 HDR output format."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -75,5 +77,14 @@ def encode_output(pixels, output_path, format=None, quality=100, speed=0,
     if format == "avif":
         return encoder(rgb, output_path, quality=quality, speed=speed)
     if format == "ultrahdr":
-        return encoder(rgb, output_path, quality=quality, headroom=headroom)
+        return encoder(
+            rgb,
+            output_path,
+            quality=quality,
+            headroom=headroom,
+            backend=uhdr_backend,
+            gainmap_scale=uhdr_gainmap_scale,
+            gainmap_gamma=uhdr_gainmap_gamma,
+            target_peak_nits=uhdr_target_peak_nits,
+        )
     return encoder(rgb, output_path, quality=quality)

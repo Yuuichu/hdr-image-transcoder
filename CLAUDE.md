@@ -16,6 +16,7 @@ Supported input formats:
 - AVIF: `.avif`
 - HEIF/HEIC: `.heic`, `.heif`
 - Ultra HDR JPEG: `.jpg`, `.jpeg`
+- Known BT.2020 PQ TIFF to Ultra HDR JPEG via optional `libultrahdr`
 - Radiance HDR: `.hdr`
 - PNG: `.png`
 - TIFF: `.tif`, `.tiff`
@@ -44,6 +45,10 @@ python hdr2avif.py input.jxr output.avif --format avif
 
 # Write standard 10-bit PQ HDR HEIF.
 python hdr2avif.py input.jxr output.heic --format heif
+
+# Convert a known true BT.2020 PQ TIFF to Ultra HDR JPEG through libultrahdr.
+$env:HDR_TRANSCODER_UHDR_DLL = "C:\Path\To\uhdr.dll"
+python hdr2avif.py input_bt2020_pq.tif output_uhdr.jpg --format ultrahdr --fidelity compat --bt2020-pq-tiff --uhdr-backend libultrahdr --verify-fidelity --info-json
 
 # Batch convert a directory.
 python hdr2avif.py "C:\Users\77126\Videos\Forza Horizon 6" --output-dir .\output
@@ -93,7 +98,8 @@ src/hdr_transcoder/
     gainmap.py      -> Gainmap AVIF (avifgainmaputil_hdr.exe)
     jxl.py          -> JPEG XL (cjxl.exe), JXL_MODE_* constants
     avif.py         -> Standard AVIF HDR (imagecodecs)
-    ultrahdr.py     -> Ultra HDR JPEG (imagecodecs)
+    ultrahdr.py     -> Ultra HDR JPEG backend dispatch
+    ultrahdr_lib.py -> Optional libultrahdr path for known BT.2020 PQ TIFF
     heif.py         -> HEIF HDR (pillow-heif)
 hdr2avif.py         -> CLI entry: from hdr_transcoder.cli import main
 jxr2avif.py         -> backward-compatible wrapper for hdr2avif.main()

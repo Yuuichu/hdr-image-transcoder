@@ -45,6 +45,7 @@ _BT2020_TO_SRGB = np.linalg.inv(_SRGB_TO_XYZ) @ _BT2020_TO_XYZ
 _SRGB_TO_DISPLAY_P3 = np.linalg.inv(_DISPLAY_P3_TO_XYZ) @ _SRGB_TO_XYZ
 _DISPLAY_P3_TO_SRGB = np.linalg.inv(_SRGB_TO_XYZ) @ _DISPLAY_P3_TO_XYZ
 _BT2020_TO_DISPLAY_P3 = np.linalg.inv(_DISPLAY_P3_TO_XYZ) @ _BT2020_TO_XYZ
+_DISPLAY_P3_TO_BT2020 = np.linalg.inv(_BT2020_TO_XYZ) @ _DISPLAY_P3_TO_XYZ
 
 
 def linear_srgb_to_bt2020(rgb):
@@ -70,6 +71,11 @@ def linear_display_p3_to_srgb(rgb):
 def linear_bt2020_to_display_p3(rgb):
     """Convert linear BT.2020 samples to linear Display P3 samples."""
     return np.asarray(rgb, dtype=np.float32) @ _BT2020_TO_DISPLAY_P3.T
+
+
+def linear_display_p3_to_bt2020(rgb):
+    """Convert linear Display P3 samples to linear BT.2020 samples."""
+    return np.asarray(rgb, dtype=np.float32) @ _DISPLAY_P3_TO_BT2020.T
 
 
 def clamp_small_negatives(rgb, epsilon=1e-6):

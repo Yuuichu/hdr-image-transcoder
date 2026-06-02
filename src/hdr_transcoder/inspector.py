@@ -150,6 +150,24 @@ def _inspect_heif_gainmap(path):
     return info
 
 
+def _inspect_ultrahdr_gainmap(path):
+    """Read lightweight Ultra HDR JPEG gain-map signals from raw bytes."""
+    data = Path(path).read_bytes()
+    soi_count = data.count(b"\xff\xd8")
+    info = {
+        "present": False,
+        "container": "jpeg",
+        "primary_jpeg": soi_count >= 1,
+        "secondary_jpeg": soi_count >= 2,
+        "mpf": b"MPF\x00" in data or b"Multi-Picture Format" in data,
+        "legacy_xmp": b"hdrgm:" in data or b"hdr-gain-map" in data,
+        "iso_21496": b"21496" in data or b"gain_map_metadata" in data,
+        "source": "raw JPEG marker scan",
+    }
+    info["present"] = bool(info["secondary_jpeg"] or info["legacy_xmp"] or info["iso_21496"])
+    return info
+
+
 def _inspect_avif_alternate_color(path, warnings):
     if not AVIFDEC.exists():
         warnings.append(f"Missing avifdec.exe: {AVIFDEC}")
@@ -298,6 +316,8 @@ def inspect_image(path):
             result["gainmap"]["alternate_color"] = alternate_color
     if fmt == "heif":
         result["gainmap"] = _inspect_heif_gainmap(path)
+    if fmt == "ultrahdr":
+        result["gainmap"] = _inspect_ultrahdr_gainmap(path)
 
     try:
         pixels, width, height = decode_to_scrgb(str(path))

@@ -520,8 +520,9 @@ def output_cases() -> list[OutputCase]:
             output_format="ultrahdr",
             extension=".jpg",
             fidelity="compat",
+            expected_gainmap=True,
             notes=[
-                "Ultra HDR JPEG is validated by decode peak; this inspector does not parse its XMP/ISO gainmap metadata."
+                "Ultra HDR JPEG metadata is checked by lightweight JPEG marker/XMP scan."
             ],
         ),
         OutputCase(
