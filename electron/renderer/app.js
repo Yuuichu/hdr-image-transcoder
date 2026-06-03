@@ -11,6 +11,12 @@ const I18N = {
     notDetected: "未检测到",
     passed: "通过",
     failed: "失败",
+    layerStatus: {
+      pass: "通过",
+      warning: "警告",
+      fail: "失败",
+      skipped: "跳过",
+    },
     ui: {
       brandTitle: "HDR 图像转码器",
       brandSubtitle: "专业 HDR 静态图像转码与验证工作台。",
@@ -49,6 +55,8 @@ const I18N = {
       quality: "质量",
       speed: "速度",
       verifyFidelity: "验证保真度",
+      verifyLayers: "分层验证",
+      dumpValidationLayers: "导出验证层图像",
       debugOverlay: "调试信息叠加图",
       infoJson: "输出 Info JSON",
       outputNaming: "输出命名",
@@ -76,6 +84,8 @@ const I18N = {
       quality: "解释质量",
       speed: "解释速度",
       verifyFidelity: "解释验证保真度",
+      verifyLayers: "解释分层验证",
+      dumpValidationLayers: "解释导出验证层图像",
       debugOverlay: "解释调试叠加图",
       infoJson: "解释 Info JSON",
       outputNaming: "解释输出命名",
@@ -93,6 +103,33 @@ const I18N = {
       heif: "HEIF HDR",
       ultrahdr: "Ultra HDR JPEG",
       gainmap: "Gainmap AVIF",
+    },
+    formatStatus: {
+      jxl: {
+        level: "ok",
+        title: "路径正常",
+        body: "最稳定的母版/归档路径。Linear scRGB + lossless 保真最好；缺点是系统预览和分享兼容性一般。",
+      },
+      avif: {
+        level: "caution",
+        title: "可用但注意",
+        body: "标准 Rec.2020 PQ HDR 路径已可用；AV1 编码较慢，scRGB 中超出 Rec.2020 的颜色会被裁剪。",
+      },
+      heif: {
+        level: "ok",
+        title: "路径正常",
+        body: "单层 Rec.2020 PQ HEIF HDR 路径正常，适合 Apple 生态显示交付；Windows/第三方预览支持取决于解码器。",
+      },
+      ultrahdr: {
+        level: "caution",
+        title: "可用但有后端前提",
+        body: "兼容 Apple/Android 的优先路径。当前缺少 libultrahdr 时会走 imagecodecs fallback；PQ TIFF 专用路径需要 libultrahdr DLL。",
+      },
+      gainmap: {
+        level: "risk",
+        title: "实验/兼容风险",
+        body: "能生成和验证，但不同查看器对 AVIF gainmap 支持不稳定；不建议作为 Apple 照片交付主路径。",
+      },
     },
     options: {
       jxlLinear: "线性归档 (scRGB)",
@@ -153,6 +190,12 @@ const I18N = {
       output: "输出",
       peak: "峰值",
       verify: "验证",
+      layerValidation: "分层验证",
+      sdrBase: "SDR Base",
+      gainmapLayer: "Gainmap",
+      hdrReconstruction: "HDR 重建",
+      metadata: "Metadata",
+      report: "报告",
     },
     help: {
       format: {
@@ -214,6 +257,14 @@ const I18N = {
       "verify-fidelity": {
         title: "验证保真度",
         body: "编码后运行项目内验证。如果元数据或重建 peak 超出项目阈值，转换会失败。",
+      },
+      "verify-layers": {
+        title: "分层验证",
+        body: "编码后分别检查 SDR base、gainmap、HDR 重建和 metadata。失败时会写出 report，便于判断是 base 色彩、gainmap headroom、重建 peak/p99，还是容器标记出错。",
+      },
+      "dump-validation-layers": {
+        title: "导出验证层图像",
+        body: "额外导出 reference_sdr、output_sdr_base、output_gainmap、diff 图和 HDR 数组到 output/validation-runs。排查颜色浅、黑位抬高或 gainmap 异常时开启；文件不会进入 git。",
       },
       "output-naming": {
         title: "输出命名模式",
@@ -285,6 +336,12 @@ const I18N = {
     notDetected: "Not detected",
     passed: "Passed",
     failed: "Failed",
+    layerStatus: {
+      pass: "Pass",
+      warning: "Warning",
+      fail: "Fail",
+      skipped: "Skipped",
+    },
     ui: {
       brandTitle: "HDR Image Transcoder",
       brandSubtitle: "Professional HDR still image conversion and verification.",
@@ -323,6 +380,8 @@ const I18N = {
       quality: "Quality",
       speed: "Speed",
       verifyFidelity: "Verify Fidelity",
+      verifyLayers: "Layer Validation",
+      dumpValidationLayers: "Dump Validation Layers",
       debugOverlay: "Debug Info Overlay",
       infoJson: "Output Info JSON",
       outputNaming: "Output Naming",
@@ -350,6 +409,8 @@ const I18N = {
       quality: "Explain quality",
       speed: "Explain speed",
       verifyFidelity: "Explain verify fidelity",
+      verifyLayers: "Explain layer validation",
+      dumpValidationLayers: "Explain dumped validation layers",
       debugOverlay: "Explain debug overlay",
       infoJson: "Explain info JSON",
       outputNaming: "Explain output naming",
@@ -367,6 +428,33 @@ const I18N = {
       heif: "HEIF HDR",
       ultrahdr: "Ultra HDR JPEG",
       gainmap: "Gainmap AVIF",
+    },
+    formatStatus: {
+      jxl: {
+        level: "ok",
+        title: "Stable path",
+        body: "Most stable master/archive path. Linear scRGB + lossless has the best fidelity; OS preview and sharing support are limited.",
+      },
+      avif: {
+        level: "caution",
+        title: "Works with caveats",
+        body: "Standard Rec.2020 PQ HDR path works. AV1 encoding is slow, and scRGB colors outside Rec.2020 are clipped.",
+      },
+      heif: {
+        level: "ok",
+        title: "Stable path",
+        body: "Single-layer Rec.2020 PQ HEIF HDR path works and is suitable for Apple display delivery. Windows/third-party preview depends on the decoder.",
+      },
+      ultrahdr: {
+        level: "caution",
+        title: "Works with backend requirements",
+        body: "Preferred Apple/Android compatibility path. Without libultrahdr it uses the imagecodecs fallback; dedicated PQ TIFF requires the libultrahdr DLL.",
+      },
+      gainmap: {
+        level: "risk",
+        title: "Experimental compatibility",
+        body: "Can be generated and verified, but AVIF gainmap support varies by viewer. Not recommended as the main Apple Photos delivery path.",
+      },
     },
     options: {
       jxlLinear: "Linear Archive (scRGB)",
@@ -427,6 +515,12 @@ const I18N = {
       output: "Output",
       peak: "Peak",
       verify: "Verify",
+      layerValidation: "Layer Validation",
+      sdrBase: "SDR Base",
+      gainmapLayer: "Gainmap",
+      hdrReconstruction: "HDR Reconstruction",
+      metadata: "Metadata",
+      report: "Report",
     },
     help: {
       format: {
@@ -488,6 +582,14 @@ const I18N = {
       "verify-fidelity": {
         title: "Verify Fidelity",
         body: "Runs post-encode checks and fails the conversion if metadata or reconstructed peak falls outside project thresholds.",
+      },
+      "verify-layers": {
+        title: "Layer Validation",
+        body: "After encoding, checks SDR base, gainmap, HDR reconstruction, and metadata separately. Failures write a report so you can tell whether the issue is base color, gainmap headroom, reconstructed peak/p99, or container tagging.",
+      },
+      "dump-validation-layers": {
+        title: "Dump Validation Layers",
+        body: "Writes reference_sdr, output_sdr_base, output_gainmap, diff images, and HDR arrays under output/validation-runs. Enable this when debugging washed-out color, lifted blacks, or abnormal gain maps; these files are ignored by git.",
       },
       "output-naming": {
         title: "Output Naming Pattern",
@@ -569,6 +671,10 @@ const state = {
   runtimeInfo: null,
   uhdrAvailable: false,
   outputReports: [],
+  autoDefaults: {
+    headroom: true,
+    targetPeak: true,
+  },
   statusLabel: "Idle",
   statusClassName: "idle",
   statusProgress: null,
@@ -593,6 +699,7 @@ const elements = {
   queueSummary: document.getElementById("queueSummary"),
   queueEmpty: document.getElementById("queueEmpty"),
   formatSelect: document.getElementById("formatSelect"),
+  formatStatusNote: document.getElementById("formatStatusNote"),
   fidelityBadge: document.getElementById("fidelityBadge"),
   jxlOptions: document.getElementById("jxlOptions"),
   ultrahdrOptions: document.getElementById("ultrahdrOptions"),
@@ -610,6 +717,8 @@ const elements = {
   bt2020PqTiffInput: document.getElementById("bt2020PqTiffInput"),
   losslessInput: document.getElementById("losslessInput"),
   verifyFidelityInput: document.getElementById("verifyFidelityInput"),
+  verifyLayersInput: document.getElementById("verifyLayersInput"),
+  dumpValidationLayersInput: document.getElementById("dumpValidationLayersInput"),
   debugOverlayInput: document.getElementById("debugOverlayInput"),
   infoJsonInput: document.getElementById("infoJsonInput"),
   advancedPanel: document.getElementById("advancedPanel"),
@@ -765,6 +874,14 @@ function formatFloat(value, digits = 3) {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : t("unknown");
 }
 
+function clampNumber(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function roundToStep(value, step = 0.01) {
+  return Math.round(value / step) * step;
+}
+
 function setStatus(label, className) {
   state.statusLabel = label;
   state.statusClassName = className;
@@ -829,6 +946,25 @@ function renderHelp(topicKey) {
   body.textContent = topic.body;
   elements.helpContent.appendChild(title);
   elements.helpContent.appendChild(body);
+}
+
+function renderFormatStatusNote() {
+  const format = elements.formatSelect.value;
+  const status = lookupText(currentDictionary(), `formatStatus.${format}`)
+    ?? lookupText(I18N.en, `formatStatus.${format}`);
+  if (!status || !elements.formatStatusNote) {
+    return;
+  }
+
+  clearNode(elements.formatStatusNote);
+  elements.formatStatusNote.className = `format-status-note ${status.level || "caution"}`;
+
+  const title = document.createElement("strong");
+  title.textContent = status.title || "";
+  const body = document.createElement("span");
+  body.textContent = status.body || "";
+  elements.formatStatusNote.appendChild(title);
+  elements.formatStatusNote.appendChild(body);
 }
 
 function queueItemMeta(item) {
@@ -898,6 +1034,7 @@ function renderQueue() {
 }
 
 function setQueueItems(paths, inputMode, inputPath = "") {
+  resetAutoDefaults();
   state.inputMode = inputMode;
   state.inputPath = inputPath;
   state.inputPaths = inputMode === "files" ? paths : [];
@@ -945,7 +1082,69 @@ function mergeImageInfos(payload) {
     return { ...item, info, status: info.error ? "error" : "ready" };
   });
   renderQueue();
+  applyAutoDefaultsFromInspector();
   renderInspector();
+}
+
+function resetAutoDefaults() {
+  state.autoDefaults = {
+    headroom: true,
+    targetPeak: true,
+  };
+  elements.headroomSdrInput.value = "2.0";
+  elements.uhdrTargetPeakInput.value = "1000";
+}
+
+function inspectedHdrDefaults() {
+  let peak = null;
+  let headroom = null;
+
+  for (const item of state.queueItems) {
+    const hdr = item.info && item.info.hdr ? item.info.hdr : null;
+    if (!hdr || hdr.is_hdr === false) {
+      continue;
+    }
+    if (typeof hdr.rgb_max === "number" && Number.isFinite(hdr.rgb_max) && hdr.rgb_max > 0) {
+      peak = peak == null ? hdr.rgb_max : Math.max(peak, hdr.rgb_max);
+    }
+    if (
+      typeof hdr.peak_headroom === "number" &&
+      Number.isFinite(hdr.peak_headroom) &&
+      hdr.peak_headroom > 0
+    ) {
+      headroom = headroom == null ? hdr.peak_headroom : Math.max(headroom, hdr.peak_headroom);
+    }
+  }
+
+  if (headroom == null && peak != null) {
+    headroom = Math.log2(Math.max(peak, 1.0));
+  }
+  if (peak == null && headroom != null) {
+    peak = 2 ** headroom;
+  }
+  if (peak == null || headroom == null || headroom <= 0) {
+    return null;
+  }
+
+  return {
+    peak,
+    headroom,
+    targetPeakNits: clampNumber(Math.ceil(peak * 100), 203, 10000),
+  };
+}
+
+function applyAutoDefaultsFromInspector() {
+  const defaults = inspectedHdrDefaults();
+  if (!defaults) {
+    return;
+  }
+
+  if (state.autoDefaults.headroom) {
+    elements.headroomSdrInput.value = roundToStep(clampNumber(defaults.headroom, 0.1, 20), 0.01).toFixed(2);
+  }
+  if (state.autoDefaults.targetPeak) {
+    elements.uhdrTargetPeakInput.value = String(Math.trunc(defaults.targetPeakNits));
+  }
 }
 
 async function loadImageInfo(filePaths) {
@@ -1031,6 +1230,28 @@ function renderInspector() {
   }
 }
 
+function layerStatusText(status) {
+  return translatedValue("layerStatus", status || "skipped");
+}
+
+function layerStatusClass(status) {
+  if (status === "fail") {
+    return "error";
+  }
+  if (status === "warning") {
+    return "warning";
+  }
+  if (status === "pass") {
+    return "pass";
+  }
+  return "";
+}
+
+function addLayerRow(card, labelKey, layer) {
+  const status = layer && layer.status ? layer.status : "skipped";
+  addInfoRow(card, t(labelKey), layerStatusText(status), layerStatusClass(status));
+}
+
 function renderOutputReports() {
   clearNode(elements.outputReportContent);
   if (state.outputReports.length === 0) {
@@ -1051,6 +1272,27 @@ function renderOutputReports() {
     }
     if (report.verify) {
       addInfoRow(card, t("infoLabels.verify"), report.verify.ok ? t("passed") : t("failed"), report.verify.ok ? "" : "error");
+    }
+    const layerValidation = report.layerValidation || null;
+    if (layerValidation && layerValidation.requested) {
+      const validationStatus = layerValidation.status || (layerValidation.ok ? "pass" : "fail");
+      addInfoRow(
+        card,
+        t("infoLabels.layerValidation"),
+        layerStatusText(validationStatus),
+        layerStatusClass(validationStatus),
+      );
+      if (layerValidation.reportPath) {
+        addInfoRow(card, t("infoLabels.report"), layerValidation.reportPath);
+      }
+      const layers = layerValidation.layers || {};
+      addLayerRow(card, "infoLabels.sdrBase", layers.sdrBase);
+      addLayerRow(card, "infoLabels.gainmapLayer", layers.gainmap);
+      addLayerRow(card, "infoLabels.hdrReconstruction", layers.hdrReconstruction);
+      addLayerRow(card, "infoLabels.metadata", layers.metadata);
+      if (layerValidation.error) {
+        addInfoRow(card, t("infoLabels.error"), layerValidation.error, "error");
+      }
     }
     const gainmap = report.gainmap || {};
     if (gainmap.present != null) {
@@ -1179,6 +1421,8 @@ function getFidelityMode() {
 }
 
 function getOptions() {
+  const verifyLayers = elements.verifyLayersInput.checked;
+  const dumpValidationLayers = elements.dumpValidationLayersInput.checked;
   return {
     inputPath: state.inputPath,
     inputPaths: state.inputPaths,
@@ -1193,8 +1437,10 @@ function getOptions() {
     headroom: getNumberValue(elements.headroomSdrInput, 2.0),
     lossless: elements.losslessInput.checked,
     verifyFidelity: elements.verifyFidelityInput.checked,
+    verifyLayers,
+    dumpValidationLayers,
     debugOverlay: elements.debugOverlayInput.checked,
-    infoJson: elements.infoJsonInput.checked,
+    infoJson: elements.infoJsonInput.checked || verifyLayers || dumpValidationLayers,
     bt2020PqTiff: elements.formatSelect.value === "ultrahdr" && elements.bt2020PqTiffInput.checked,
     uhdrBackend: elements.formatSelect.value === "ultrahdr" ? elements.uhdrBackendSelect.value : "auto",
     uhdrGainmapScale: elements.formatSelect.value === "ultrahdr" ? Math.trunc(getNumberValue(elements.uhdrGainmapScaleInput, 2)) : 2,
@@ -1304,6 +1550,7 @@ function updateFormatState() {
   elements.fidelityBadge.textContent =
     translatedValue("fidelity", fidelity);
   elements.fidelityBadge.className = `fidelity-badge ${fidelity}`;
+  renderFormatStatusNote();
   renderSettingsWarning();
 }
 
@@ -1322,6 +1569,8 @@ function updateBusyState(running) {
   elements.qualityInput.disabled = disabled;
   elements.speedInput.disabled = disabled;
   elements.verifyFidelityInput.disabled = disabled;
+  elements.verifyLayersInput.disabled = disabled;
+  elements.dumpValidationLayersInput.disabled = disabled;
   elements.debugOverlayInput.disabled = disabled;
   elements.infoJsonInput.disabled = disabled;
   elements.namePrefixInput.disabled = disabled;
@@ -1386,6 +1635,7 @@ function clearOutputDirectory() {
 }
 
 function clearQueue() {
+  resetAutoDefaults();
   state.inputPath = "";
   state.inputPaths = [];
   state.inputMode = "files";
@@ -1488,13 +1738,16 @@ async function loadOutputReports(outputPaths) {
 
 function handleConversionDone(result) {
   updateBusyState(false);
+  const shouldReadReports = elements.infoJsonInput.checked ||
+    elements.verifyLayersInput.checked ||
+    elements.dumpValidationLayersInput.checked;
 
   if (result.ok) {
     setQueueFinished(true);
     setStatus("Done", "success");
     const outputCount = Array.isArray(result.outputPaths) ? result.outputPaths.length : 0;
     setSummary(outputCount > 0 ? t("messages.finishedChecked", { count: outputCount }) : t("messages.finished"));
-    if (elements.infoJsonInput.checked) {
+    if (shouldReadReports) {
       loadOutputReports(result.outputPaths || []);
     }
   } else if (result.canceled) {
@@ -1505,6 +1758,9 @@ function handleConversionDone(result) {
     setQueueFinished(false);
     setStatus("Error", "error");
     setSummary(result.message || t("messages.conversionFailed"));
+    if (shouldReadReports) {
+      loadOutputReports(result.outputPaths || []);
+    }
   }
 
   appendLog(`\n--- ${result.message || t("messages.conversionEnded")} ---\n`, "system");
@@ -1564,6 +1820,12 @@ function bindEvents() {
   elements.losslessInput.addEventListener("change", updateFormatState);
   elements.bt2020PqTiffInput.addEventListener("change", updateFormatState);
   elements.uhdrBackendSelect.addEventListener("change", updateFormatState);
+  elements.headroomSdrInput.addEventListener("input", () => {
+    state.autoDefaults.headroom = false;
+  });
+  elements.uhdrTargetPeakInput.addEventListener("input", () => {
+    state.autoDefaults.targetPeak = false;
+  });
   elements.advancedPanel.addEventListener("toggle", () => {
     state.advancedOpen = elements.advancedPanel.open;
   });

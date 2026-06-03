@@ -11,6 +11,7 @@ from hdr_transcoder.config import (
     CICP_BT2020_MATRIX,
     CICP_BT2020_PRIMARIES,
     CICP_PQ_TRANSFER,
+    DISPLAY_DECODE_PEAK_TOLERANCE_STOPS,
     DISPLAY_PEAK_TOLERANCE_SCRGB,
     GAINMAP_DECODE_PEAK_TOLERANCE_STOPS,
     GAINMAP_HEADROOM_TOLERANCE_STOPS,
@@ -52,7 +53,8 @@ def verify_peak(source_pixels, output_path, tolerance=DISPLAY_PEAK_TOLERANCE_SCR
     return {"sourcePeak": source_peak, "outputPeak": output_peak, "delta": delta, "tolerance": tolerance}
 
 
-def verify_peak_stops(source_pixels, output_path, tolerance_stops=GAINMAP_DECODE_PEAK_TOLERANCE_STOPS):
+def verify_peak_stops(source_pixels, output_path, tolerance_stops=GAINMAP_DECODE_PEAK_TOLERANCE_STOPS,
+                      description="decoded gainmap peak"):
     decoded, width, height = decode_to_scrgb(str(output_path))
     if decoded.shape[:2] != source_pixels.shape[:2]:
         raise ValueError(f"Fidelity verify failed: output dimensions are {width}x{height}")
@@ -61,12 +63,12 @@ def verify_peak_stops(source_pixels, output_path, tolerance_stops=GAINMAP_DECODE
     delta = stop_delta(source_peak, output_peak)
     if delta > tolerance_stops:
         raise ValueError(
-            "Fidelity verify failed: decoded gainmap peak drift "
+            f"Fidelity verify failed: {description} drift "
             f"source_peak={source_peak:.4f}, output_peak={output_peak:.4f}, "
             f"delta={delta:.4f} stops, tolerance={tolerance_stops:.4f} stops"
         )
     print(
-        "  Fidelity verify: gainmap decoded peak "
+        f"  Fidelity verify: {description} "
         f"{output_peak:.4f} (source {source_peak:.4f}, delta {delta:.4f} stops)"
     )
     return {"sourcePeak": source_peak, "outputPeak": output_peak, "deltaStops": delta, "toleranceStops": tolerance_stops}
@@ -265,11 +267,27 @@ def verify_output(source_pixels, output_path, output_format, jxl_mode):
     result = {"ok": True, "checks": {}}
     if output_format == "jxl":
         result["checks"]["metadata"] = verify_jxl_metadata(output_path, jxl_mode)
-        tolerance = JXL_MASTER_PEAK_TOLERANCE_SCRGB if jxl_mode == JXL_MODE_LINEAR_SRGB else DISPLAY_PEAK_TOLERANCE_SCRGB
-        result["checks"]["peak"] = verify_peak(source_pixels, output_path, tolerance=tolerance)
+        if jxl_mode == JXL_MODE_LINEAR_SRGB:
+            result["checks"]["peak"] = verify_peak(
+                source_pixels,
+                output_path,
+                tolerance=JXL_MASTER_PEAK_TOLERANCE_SCRGB,
+            )
+        else:
+            result["checks"]["peak"] = verify_peak_stops(
+                source_pixels,
+                output_path,
+                tolerance_stops=DISPLAY_DECODE_PEAK_TOLERANCE_STOPS,
+                description="display HDR peak",
+            )
     elif output_format == "avif":
         result["checks"]["metadata"] = verify_avif_metadata(output_path)
-        result["checks"]["peak"] = verify_peak(source_pixels, output_path)
+        result["checks"]["peak"] = verify_peak_stops(
+            source_pixels,
+            output_path,
+            tolerance_stops=DISPLAY_DECODE_PEAK_TOLERANCE_STOPS,
+            description="display HDR peak",
+        )
     elif output_format == "gainmap":
         result["checks"]["headroom"] = verify_gainmap_headroom(source_pixels, output_path)
         result["checks"]["alternateColor"] = verify_gainmap_alternate_color(output_path)
@@ -284,6 +302,13 @@ def verify_output(source_pixels, output_path, output_format, jxl_mode):
             source_pixels,
             output_path,
             tolerance_stops=ULTRAHDR_DECODE_PEAK_TOLERANCE_STOPS,
+        )
+    elif output_format == "heif":
+        result["checks"]["peak"] = verify_peak_stops(
+            source_pixels,
+            output_path,
+            tolerance_stops=DISPLAY_DECODE_PEAK_TOLERANCE_STOPS,
+            description="display HDR peak",
         )
     else:
         result["checks"]["peak"] = verify_peak(source_pixels, output_path)

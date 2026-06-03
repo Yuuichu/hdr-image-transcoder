@@ -48,17 +48,23 @@ def test_electron_wires_ultrahdr_workbench_options(repo_root):
     assert "bt2020PqTiffInput" in html
     assert "uhdrBackendSelect" in html
     assert "verifyFidelityInput" in html
+    assert "verifyLayersInput" in html
+    assert "dumpValidationLayersInput" in html
+    assert "formatStatusNote" in html
     assert "readInfoJson" in preload_js
     assert '"--bt2020-pq-tiff"' in main_js
     assert '"--uhdr-backend"' in main_js
     assert '"--gainmap-scale"' in main_js
     assert '"--target-peak-nits"' in main_js
     assert '"--verify-fidelity"' in main_js
+    assert '"--verify-layers"' in main_js
+    assert '"--dump-validation-layers"' in main_js
+    assert '"--validation-report"' in main_js
     assert "allowedInfoJsonSidecars" in main_js
     assert "allowedInfoJsonSidecars = new Map()" in main_js
     assert "MAX_INFO_JSON_BYTES" in main_js
     assert "outputDir = outputDir || dirPath" in main_js
-    assert "exitCode === 0 && !canceled && options.infoJson" in main_js
+    assert "!canceled && (options.infoJson || options.verifyLayers || options.dumpValidationLayers)" in main_js
     assert "conversionStartedAtMs" in main_js
     assert "scanInfoJsonLogChunk" in main_js
     assert "writtenInfoJsonPaths" in main_js
@@ -68,6 +74,20 @@ def test_electron_wires_ultrahdr_workbench_options(repo_root):
     assert 'ipcMain.handle("conversion:readInfoJson"' in main_js
     assert "activeHelpTopic" in app_js
     assert "logFilter" in app_js
+    assert "autoDefaults" in app_js
+    assert "applyAutoDefaultsFromInspector" in app_js
+    assert "inspectedHdrDefaults" in app_js
+    assert "renderFormatStatusNote" in app_js
+    assert "formatStatus" in app_js
+    assert "layerValidation" in app_js
+    assert "layerStatusText" in app_js
+    assert "const validationStatus = layerValidation.status" in app_js
+    assert "const verifyLayers = elements.verifyLayersInput.checked" in app_js
+    assert "dumpValidationLayers" in app_js
+    assert "Experimental compatibility" in app_js
+    assert "targetPeakNits: clampNumber(Math.ceil(peak * 100), 203, 10000)" in app_js
+    assert "state.autoDefaults.headroom = false" in app_js
+    assert "state.autoDefaults.targetPeak = false" in app_js
     assert 'bt2020PqTiff: elements.formatSelect.value === "ultrahdr"' in app_js
 
 

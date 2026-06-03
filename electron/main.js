@@ -262,7 +262,7 @@ function applyNameTemplate(stem, index, options) {
 }
 
 function appendInfoJsonPaths(paths, options) {
-  if (!options.infoJson) {
+  if (!options.infoJson && !options.verifyLayers && !options.dumpValidationLayers) {
     return paths;
   }
   const sidecars = paths.map((outputPath) => {
@@ -397,11 +397,17 @@ function buildArgs(options) {
   if (options.debugOverlay) {
     args.push("--debug-overlay");
   }
-  if (options.infoJson) {
+  if (options.infoJson || options.verifyLayers || options.dumpValidationLayers) {
     args.push("--info-json");
   }
   if (options.verifyFidelity) {
     args.push("--verify-fidelity");
+  }
+  if (options.verifyLayers) {
+    args.push("--verify-layers", "--validation-report");
+  }
+  if (options.dumpValidationLayers) {
+    args.push("--dump-validation-layers");
   }
   if (options.format === "ultrahdr" && options.bt2020PqTiff) {
     args.push("--bt2020-pq-tiff");
@@ -456,6 +462,12 @@ function validateOptions(options) {
   }
   if (options.verifyFidelity != null && typeof options.verifyFidelity !== "boolean") {
     throw new Error("Verify fidelity must be true or false.");
+  }
+  if (options.verifyLayers != null && typeof options.verifyLayers !== "boolean") {
+    throw new Error("Layer validation must be true or false.");
+  }
+  if (options.dumpValidationLayers != null && typeof options.dumpValidationLayers !== "boolean") {
+    throw new Error("Dump validation layers must be true or false.");
   }
   if (options.bt2020PqTiff != null && typeof options.bt2020PqTiff !== "boolean") {
     throw new Error("BT.2020 PQ TIFF mode must be true or false.");
@@ -625,7 +637,11 @@ function infoJsonPathForOutput(outputPath) {
 
 function rememberAllowedInfoJsonSidecars(outputPaths, options, conversionStartedAtMs, writtenInfoJsonPaths) {
   clearAllowedInfoJsonSidecars();
-  if (!options.infoJson || !Array.isArray(outputPaths) || !(writtenInfoJsonPaths instanceof Set)) {
+  if (
+    (!options.infoJson && !options.verifyLayers && !options.dumpValidationLayers) ||
+    !Array.isArray(outputPaths) ||
+    !(writtenInfoJsonPaths instanceof Set)
+  ) {
     return;
   }
 
@@ -752,7 +768,7 @@ ipcMain.handle("conversion:start", async (_event, options) => {
     currentProcess = null;
     cancelRequested = false;
     cancelForceUsed = false;
-    if (exitCode === 0 && !canceled && options.infoJson) {
+    if (!canceled && (options.infoJson || options.verifyLayers || options.dumpValidationLayers)) {
       rememberAllowedInfoJsonSidecars(outputPaths, options, conversionStartedAtMs, writtenInfoJsonPaths);
     } else {
       clearAllowedInfoJsonSidecars();

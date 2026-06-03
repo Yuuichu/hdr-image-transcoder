@@ -420,6 +420,39 @@ label {
   gap: 12px;
 }
 
+.format-status-note {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.format-status-note strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.format-status-note.ok {
+  border-color: #9dd4b0;
+  background: #eef8f1;
+}
+
+.format-status-note.caution {
+  border-color: #e2c56f;
+  background: #fff9e6;
+}
+
+.format-status-note.risk {
+  border-color: #f1aaa3;
+  background: #fff4f2;
+}
+
 .label-row {
   display: flex;
   align-items: center;
@@ -619,6 +652,10 @@ label {
 
 .info-row.error .info-value {
   color: var(--danger);
+}
+
+.info-row.pass .info-value {
+  color: var(--success);
 }
 
 .report-card {

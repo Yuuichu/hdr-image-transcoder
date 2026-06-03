@@ -45,6 +45,7 @@ from hdr_transcoder.formats import (
 )
 from hdr_transcoder.formats.ultrahdr import encode_ultrahdr_bt2020_pq_tiff
 from hdr_transcoder.formats.ultrahdr_lib import is_libultrahdr_available
+from hdr_transcoder.layer_validation import validate_layers as _validate_layers
 from hdr_transcoder.processor import prepare_alternate_hdr, prepare_base_sdr
 from hdr_transcoder.validation import source_peak_headroom as _source_peak_headroom
 from hdr_transcoder.validation import verify_output as _verify_output
@@ -170,7 +171,7 @@ def _ensure_finite_hdr(pixels, input_path):
         raise ValueError(f"Decoded image contains {count} NaN or Infinity sample(s): {input_path}")
 
 
-def _write_info_json(output_path, output_format, jxl_mode, fidelity, verify_result):
+def _write_info_json(output_path, output_format, jxl_mode, fidelity, verify_result, layer_result=None):
     import json
 
     from hdr_transcoder.inspector import inspect_image
@@ -204,6 +205,7 @@ def _write_info_json(output_path, output_format, jxl_mode, fidelity, verify_resu
             "headroom": hdr.get("peak_headroom"),
         },
         "verify": verify_result,
+        "layerValidation": layer_result,
         "inspector": info,
     }
     info_path = Path(output_path).with_suffix(".info.json")
@@ -215,6 +217,8 @@ def convert_single(input_path, output_path, quality=100, speed=0, max_headroom=N
                    format=None, lossless=False, headroom=2.0,
                    jxl_mode=None, fidelity=FIDELITY_MASTER,
                    allow_non_master=False, verify_fidelity=False,
+                   verify_layers=False, dump_validation_layers=False,
+                   validation_report=None,
                    gainmap_headroom_mode=GAINMAP_HEADROOM_SOURCE_PEAK,
                    debug_overlay=False, info_json=False,
                    pq_input=False, heic_rgb_gainmap_only=False,
@@ -362,23 +366,44 @@ def convert_single(input_path, output_path, quality=100, speed=0, max_headroom=N
     size_mb = output_path.stat().st_size / (1024 * 1024)
     print(f"  Output: {output_path} ({size_mb:.1f} MB)")
     verify_result = {"requested": bool(verify_fidelity), "ok": None, "error": None}
+    layer_requested = bool(verify_layers or dump_validation_layers or validation_report)
+    layer_result = {"requested": layer_requested, "ok": None, "error": None}
+    validation_errors = []
     if verify_fidelity:
         try:
             verify_result = {"requested": True, **_verify_output(hdr, output_path, output_format, jxl_mode)}
         except Exception as exc:
             verify_result = {"requested": True, "ok": False, "error": str(exc)}
-            if info_json:
-                info_path = _write_info_json(output_path, output_format, jxl_mode, fidelity, verify_result)
-                print(f"  Info JSON: {info_path}")
-            raise
+            validation_errors.append(str(exc))
+    if layer_requested:
+        try:
+            layer_result = _validate_layers(
+                hdr,
+                output_path,
+                output_format,
+                jxl_mode=jxl_mode,
+                headroom=headroom,
+                dump_layers=dump_validation_layers,
+                validation_report=validation_report,
+            )
+            if not layer_result.get("ok"):
+                raise ValueError(f"Layer validation failed: {layer_result.get('reportPath')}")
+        except Exception as exc:
+            if not isinstance(layer_result, dict) or layer_result.get("ok") is None:
+                layer_result = {"requested": True, "ok": False, "error": str(exc)}
+            else:
+                layer_result = {**layer_result, "ok": False, "error": str(exc)}
+            validation_errors.append(str(exc))
     if debug_overlay:
         from hdr_transcoder.inspector import create_debug_overlay
 
         overlay_path = create_debug_overlay(output_path)
         print(f"  Debug overlay: {overlay_path}")
     if info_json:
-        info_path = _write_info_json(output_path, output_format, jxl_mode, fidelity, verify_result)
+        info_path = _write_info_json(output_path, output_format, jxl_mode, fidelity, verify_result, layer_result)
         print(f"  Info JSON: {info_path}")
+    if validation_errors:
+        raise ValueError("; ".join(validation_errors))
 
 
 def _split_path_args(path_args, output_dir):
@@ -466,6 +491,12 @@ def main():
                         help="Allow non-master formats while --fidelity master is active")
     parser.add_argument("--verify-fidelity", action="store_true",
                         help="Decode/check the written file for HDR peak/headroom and metadata regressions")
+    parser.add_argument("--verify-layers", action="store_true",
+                        help="Run layered validation for SDR base, gainmap, HDR reconstruction, and metadata")
+    parser.add_argument("--dump-validation-layers", action="store_true",
+                        help="Write layer validation debug images/arrays under output/validation-runs")
+    parser.add_argument("--validation-report", nargs="?", const="auto", default=None,
+                        help="Write a layer validation report. Optional value is a report file or output directory")
     parser.add_argument("--debug-overlay", action="store_true",
                         help="Create a sidecar SDR PNG with output image debug information overlaid")
     parser.add_argument("--info-json", action="store_true",
@@ -590,6 +621,9 @@ def main():
                     fidelity=args.fidelity,
                     allow_non_master=args.allow_non_master,
                     verify_fidelity=args.verify_fidelity,
+                    verify_layers=args.verify_layers,
+                    dump_validation_layers=args.dump_validation_layers,
+                    validation_report=args.validation_report,
                     gainmap_headroom_mode=args.gainmap_headroom_mode,
                     debug_overlay=args.debug_overlay,
                     info_json=args.info_json,
@@ -653,6 +687,9 @@ def main():
                     fidelity=args.fidelity,
                     allow_non_master=args.allow_non_master,
                     verify_fidelity=args.verify_fidelity,
+                    verify_layers=args.verify_layers,
+                    dump_validation_layers=args.dump_validation_layers,
+                    validation_report=args.validation_report,
                     gainmap_headroom_mode=args.gainmap_headroom_mode,
                     debug_overlay=args.debug_overlay,
                     info_json=args.info_json,
