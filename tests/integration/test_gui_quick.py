@@ -54,9 +54,21 @@ def test_electron_wires_ultrahdr_workbench_options(repo_root):
     assert '"--gainmap-scale"' in main_js
     assert '"--target-peak-nits"' in main_js
     assert '"--verify-fidelity"' in main_js
+    assert "allowedInfoJsonSidecars" in main_js
+    assert "allowedInfoJsonSidecars = new Map()" in main_js
+    assert "MAX_INFO_JSON_BYTES" in main_js
+    assert "outputDir = outputDir || dirPath" in main_js
+    assert "exitCode === 0 && !canceled && options.infoJson" in main_js
+    assert "conversionStartedAtMs" in main_js
+    assert "scanInfoJsonLogChunk" in main_js
+    assert "writtenInfoJsonPaths" in main_js
+    assert "expectedSidecars.has(sidecar)" in main_js
+    assert "Number.isFinite(uhdrTargetPeakNits)" in main_js
+    assert "Number.isFinite(options.headroom)" in main_js
     assert 'ipcMain.handle("conversion:readInfoJson"' in main_js
     assert "activeHelpTopic" in app_js
     assert "logFilter" in app_js
+    assert 'bt2020PqTiff: elements.formatSelect.value === "ultrahdr"' in app_js
 
 
 @pytest.mark.quick

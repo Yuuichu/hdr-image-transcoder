@@ -35,6 +35,7 @@ const INVALID_FILENAME_RE = /[<>:"/\\|?*\x00-\x1f]/g;
 const WINDOW_MARGIN = 80;
 const MIN_CONTENT_WIDTH = 1180;
 const MIN_CONTENT_HEIGHT = 780;
+const MAX_INFO_JSON_BYTES = 4 * 1024 * 1024;
 const INPUT_EXTENSIONS = [
   "jxr",
   "wdp",
@@ -57,6 +58,7 @@ let currentProcess = null;
 let cancelRequested = false;
 let cancelForceTimer = null;
 let cancelForceUsed = false;
+let allowedInfoJsonSidecars = new Map();
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -208,6 +210,18 @@ function isSamePath(left, right) {
   return resolvedLeft === resolvedRight;
 }
 
+function convertedName(filePath) {
+  const parsed = path.parse(filePath);
+  return path.join(parsed.dir, `${parsed.name}_converted${parsed.ext}`);
+}
+
+function outputPathFor(inputPath, outputDir, ext, index, options, useNaming = true) {
+  const parsed = path.parse(inputPath);
+  const stem = useNaming ? applyNameTemplate(parsed.name, index, options) : parsed.name;
+  const outputPath = path.join(outputDir, `${stem}${ext}`);
+  return isSamePath(inputPath, outputPath) ? convertedName(outputPath) : outputPath;
+}
+
 function resolveOutputPath(inputPath, outputDir, format, inputMode) {
   if (!outputDir) {
     return null;
@@ -217,14 +231,7 @@ function resolveOutputPath(inputPath, outputDir, format, inputMode) {
     return null;
   }
 
-  const parsed = path.parse(inputPath);
-  const outputPath = path.join(outputDir, `${parsed.name}${getOutputExtension(format)}`);
-
-  if (isSamePath(inputPath, outputPath)) {
-    return path.join(outputDir, `${parsed.name}_converted${parsed.ext}`);
-  }
-
-  return outputPath;
+  return outputPathFor(inputPath, outputDir, getOutputExtension(format), 1, {}, false);
 }
 
 function numberToken(index, start = 1, padding = 3) {
@@ -263,6 +270,27 @@ function appendInfoJsonPaths(paths, options) {
     return path.join(parsed.dir, `${parsed.name}.info.json`);
   });
   return [...paths, ...sidecars];
+}
+
+function clearAllowedInfoJsonSidecars() {
+  allowedInfoJsonSidecars = new Map();
+}
+
+function collectInfoJsonPathFromLine(line, collector) {
+  const match = String(line).match(/^\s*Info JSON:\s*(.+?)\s*$/);
+  if (match) {
+    collector.add(path.resolve(match[1]));
+  }
+}
+
+function scanInfoJsonLogChunk(text, collector, carry = "") {
+  const combined = `${carry}${text}`;
+  const lines = combined.split(/\r?\n/);
+  const remainder = lines.pop() || "";
+  for (const line of lines) {
+    collectInfoJsonPathFromLine(line, collector);
+  }
+  return remainder;
 }
 
 function appendNamingArgs(args, options) {
@@ -351,7 +379,7 @@ function buildArgs(options) {
   args.push("--fidelity", options.fidelity || "master");
   args.push("--quality", String(options.quality));
   args.push("--speed", String(options.speed));
-  if (options.headroom != null && typeof options.headroom === "number") {
+  if (["gainmap", "ultrahdr"].includes(options.format) && options.headroom != null && typeof options.headroom === "number") {
     args.push("--headroom", String(options.headroom));
   }
   if (options.format === "gainmap") {
@@ -375,7 +403,7 @@ function buildArgs(options) {
   if (options.verifyFidelity) {
     args.push("--verify-fidelity");
   }
-  if (options.bt2020PqTiff) {
+  if (options.format === "ultrahdr" && options.bt2020PqTiff) {
     args.push("--bt2020-pq-tiff");
   }
   if (options.format === "ultrahdr") {
@@ -414,10 +442,10 @@ function validateOptions(options) {
   if (!FIDELITY_MODES.includes(options.fidelity || "master")) {
     throw new Error("Unknown fidelity mode.");
   }
-  if (!GAINMAP_HEADROOM_MODES.includes(options.gainmapHeadroomMode || "source-peak")) {
+  if (options.format === "gainmap" && !GAINMAP_HEADROOM_MODES.includes(options.gainmapHeadroomMode || "source-peak")) {
     throw new Error("Unknown gainmap headroom mode.");
   }
-  if (!UHDR_BACKENDS.includes(options.uhdrBackend || "auto")) {
+  if (options.format === "ultrahdr" && !UHDR_BACKENDS.includes(options.uhdrBackend || "auto")) {
     throw new Error("Unknown Ultra HDR backend.");
   }
   if (options.debugOverlay != null && typeof options.debugOverlay !== "boolean") {
@@ -439,14 +467,21 @@ function validateOptions(options) {
     throw new Error("Speed must be between 0 and 10.");
   }
   const uhdrGainmapScale = options.uhdrGainmapScale ?? 2;
-  if (!Number.isInteger(uhdrGainmapScale) || uhdrGainmapScale < 1 || uhdrGainmapScale > 128) {
+  if (options.format === "ultrahdr" && (!Number.isInteger(uhdrGainmapScale) || uhdrGainmapScale < 1 || uhdrGainmapScale > 128)) {
     throw new Error("Ultra HDR gainmap scale must be between 1 and 128.");
   }
   const uhdrTargetPeakNits = options.uhdrTargetPeakNits ?? 1000;
-  if (typeof uhdrTargetPeakNits !== "number" || uhdrTargetPeakNits < 203 || uhdrTargetPeakNits > 10000) {
+  if (
+    options.format === "ultrahdr" &&
+    (typeof uhdrTargetPeakNits !== "number" || !Number.isFinite(uhdrTargetPeakNits) ||
+      uhdrTargetPeakNits < 203 || uhdrTargetPeakNits > 10000)
+  ) {
     throw new Error("Ultra HDR target peak must be between 203 and 10000 nits.");
   }
-  if (typeof options.headroom !== "number" || options.headroom <= 0) {
+  if (
+    ["gainmap", "ultrahdr"].includes(options.format) &&
+    (typeof options.headroom !== "number" || !Number.isFinite(options.headroom) || options.headroom <= 0)
+  ) {
     throw new Error("Base headroom must be greater than 0.");
   }
   const nameStart = options.nameStart ?? 1;
@@ -530,22 +565,19 @@ ipcMain.handle("runtime:check", async () => checkRuntimeEnvironment());
 
 function computeOutputPaths(options) {
   const ext = getOutputExtension(options.format);
-  const outputDir = options.outputDir
-    ? path.resolve(options.outputDir)
-    : path.dirname(path.resolve(options.inputPath || options.inputPaths?.[0] || ""));
+  let outputDir = options.outputDir ? path.resolve(options.outputDir) : null;
 
   if (options.inputMode === "files" && Array.isArray(options.inputPaths)) {
+    outputDir = outputDir || path.dirname(path.resolve(options.inputPaths[0] || ""));
     const paths = options.inputPaths.map((p, index) => {
-      const parsed = path.parse(p);
-      const stem = applyNameTemplate(parsed.name, index + 1, options);
-      const outPath = path.join(outputDir, `${stem}${ext}`);
-      return isSamePath(p, outPath) ? path.join(outputDir, `${parsed.name}_converted${ext}`) : outPath;
+      return outputPathFor(p, outputDir, ext, index + 1, options);
     });
     return appendInfoJsonPaths(paths, options);
   }
 
   if (options.inputMode === "directory") {
     const dirPath = path.resolve(options.inputPath);
+    outputDir = outputDir || dirPath;
     let entries = [];
     try {
       entries = fs.readdirSync(dirPath, { withFileTypes: true })
@@ -556,25 +588,19 @@ function computeOutputPaths(options) {
       return [];
     }
     const paths = entries.map((name, index) => {
-      const parsed = path.parse(name);
-      const stem = applyNameTemplate(parsed.name, index + 1, options);
-      return path.join(outputDir, `${stem}${ext}`);
+      return outputPathFor(path.join(dirPath, name), outputDir, ext, index + 1, options);
     });
     return appendInfoJsonPaths(paths, options);
   }
 
   // Single file mode
-  const outputPath = resolveOutputPath(options.inputPath, options.outputDir, options.format, options.inputMode);
+  const outputPath = resolveOutputPath(options.inputPath, outputDir, options.format, options.inputMode);
   if (outputPath) {
     return appendInfoJsonPaths([outputPath], options);
   }
 
   const parsed = path.parse(options.inputPath);
-  const defaultPath = path.join(parsed.dir, `${parsed.name}${ext}`);
-  const safePath = isSamePath(options.inputPath, defaultPath)
-    ? path.join(parsed.dir, `${parsed.name}_converted${ext}`)
-    : defaultPath;
-  return appendInfoJsonPaths([safePath], options);
+  return appendInfoJsonPaths([outputPathFor(options.inputPath, parsed.dir, ext, 1, options)], options);
 }
 
 ipcMain.handle("conversion:checkOverwrite", async (_event, options) => {
@@ -591,10 +617,35 @@ ipcMain.handle("conversion:checkOverwrite", async (_event, options) => {
 
 function infoJsonPathForOutput(outputPath) {
   if (path.extname(outputPath).toLowerCase() === ".json") {
-    return outputPath;
+    return path.resolve(outputPath);
   }
   const parsed = path.parse(outputPath);
-  return path.join(parsed.dir, `${parsed.name}.info.json`);
+  return path.resolve(parsed.dir, `${parsed.name}.info.json`);
+}
+
+function rememberAllowedInfoJsonSidecars(outputPaths, options, conversionStartedAtMs, writtenInfoJsonPaths) {
+  clearAllowedInfoJsonSidecars();
+  if (!options.infoJson || !Array.isArray(outputPaths) || !(writtenInfoJsonPaths instanceof Set)) {
+    return;
+  }
+
+  const minMtimeMs = Math.max(0, conversionStartedAtMs - 5000);
+  const expectedSidecars = new Set(outputPaths
+    .filter((p) => typeof p === "string" && p)
+    .map(infoJsonPathForOutput));
+  const sidecars = [...writtenInfoJsonPaths].filter((sidecar) => expectedSidecars.has(sidecar));
+
+  for (const sidecar of sidecars) {
+    try {
+      const stat = fs.lstatSync(sidecar);
+      if (!stat.isFile() || stat.size > MAX_INFO_JSON_BYTES || stat.mtimeMs < minMtimeMs) {
+        continue;
+      }
+      allowedInfoJsonSidecars.set(sidecar, { minMtimeMs });
+    } catch {
+      // Only sidecars actually written by the completed conversion become readable.
+    }
+  }
 }
 
 ipcMain.handle("conversion:readInfoJson", async (_event, outputPaths) => {
@@ -603,13 +654,22 @@ ipcMain.handle("conversion:readInfoJson", async (_event, outputPaths) => {
   }
   const sidecars = [...new Set(outputPaths
     .filter((p) => typeof p === "string" && p)
-    .map(infoJsonPathForOutput))];
+    .map(infoJsonPathForOutput))]
+    .filter((sidecar) => allowedInfoJsonSidecars.has(sidecar));
   const reports = [];
   for (const sidecar of sidecars) {
-    if (!fs.existsSync(sidecar)) {
-      continue;
-    }
+    const allowed = allowedInfoJsonSidecars.get(sidecar);
     try {
+      const stat = fs.lstatSync(sidecar);
+      if (!stat.isFile()) {
+        continue;
+      }
+      if (stat.size > MAX_INFO_JSON_BYTES) {
+        throw new Error(`Info JSON exceeds ${MAX_INFO_JSON_BYTES} bytes`);
+      }
+      if (allowed && stat.mtimeMs < allowed.minMtimeMs) {
+        continue;
+      }
       reports.push(JSON.parse(fs.readFileSync(sidecar, "utf8")));
     } catch (error) {
       reports.push({
@@ -630,6 +690,10 @@ ipcMain.handle("conversion:start", async (_event, options) => {
     throw new Error("A conversion is already running.");
   }
 
+  clearAllowedInfoJsonSidecars();
+  const conversionStartedAtMs = Date.now();
+  const writtenInfoJsonPaths = new Set();
+  let infoJsonLogCarry = "";
   const { args, outputPath } = buildArgs(options);
   const outputPaths = computeOutputPaths(options);
   cancelRequested = false;
@@ -647,9 +711,11 @@ ipcMain.handle("conversion:start", async (_event, options) => {
   });
 
   currentProcess.stdout.on("data", (chunk) => {
+    const text = chunk.toString();
+    infoJsonLogCarry = scanInfoJsonLogChunk(text, writtenInfoJsonPaths, infoJsonLogCarry);
     sendToRenderer("conversion:output", {
       stream: "stdout",
-      text: chunk.toString(),
+      text,
     });
   });
 
@@ -665,6 +731,7 @@ ipcMain.handle("conversion:start", async (_event, options) => {
     currentProcess = null;
     cancelRequested = false;
     cancelForceUsed = false;
+    clearAllowedInfoJsonSidecars();
     clearCancelForceTimer();
     sendToRenderer("conversion:done", {
       ok: false,
@@ -678,9 +745,18 @@ ipcMain.handle("conversion:start", async (_event, options) => {
 
   currentProcess.on("close", (exitCode, signal) => {
     const canceled = (cancelRequested && exitCode !== 0) || cancelForceUsed || signal === "SIGTERM";
+    if (infoJsonLogCarry) {
+      collectInfoJsonPathFromLine(infoJsonLogCarry, writtenInfoJsonPaths);
+      infoJsonLogCarry = "";
+    }
     currentProcess = null;
     cancelRequested = false;
     cancelForceUsed = false;
+    if (exitCode === 0 && !canceled && options.infoJson) {
+      rememberAllowedInfoJsonSidecars(outputPaths, options, conversionStartedAtMs, writtenInfoJsonPaths);
+    } else {
+      clearAllowedInfoJsonSidecars();
+    }
     clearCancelForceTimer();
     sendToRenderer("conversion:done", {
       ok: exitCode === 0 && !canceled,

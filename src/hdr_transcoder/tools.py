@@ -7,7 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from hdr_transcoder.config import LIBAVIF_DIR, LIBHEIF_DIR, LIBJXL_DIR, LIBULTRAHDR_DIR, PROJECT_ROOT
+from hdr_transcoder.config import LIBAVIF_DIR, LIBHEIF_DIR, LIBJXL_DIR, PROJECT_ROOT
+from hdr_transcoder.formats.ultrahdr_lib import candidate_uhdr_dll_paths
 
 AVIFGAINMAPUTIL = LIBAVIF_DIR / "avifgainmaputil.exe"
 AVIFGAINMAPUTIL_HDR = LIBAVIF_DIR / "avifgainmaputil_hdr.exe"
@@ -17,7 +18,6 @@ CJXL = LIBJXL_DIR / "cjxl.exe"
 DJXL = LIBJXL_DIR / "djxl.exe"
 JXLINFO = LIBJXL_DIR / "jxlinfo.exe"
 HEIFGAINMAPUTIL_HDR = LIBHEIF_DIR / "heifgainmaputil_hdr.py"
-UHDR_DLL = LIBULTRAHDR_DIR / "uhdr.dll"
 
 REQUIRED_TOOLS = {
     "avifgainmaputil.exe": AVIFGAINMAPUTIL,
@@ -77,10 +77,13 @@ def optional_uhdr_status():
                 "env": {key: bool(path) for key, path in env_paths.items()},
             }
 
+    candidates = candidate_uhdr_dll_paths()
+    found = next((path for path in candidates if path.exists()), None)
     return {
-        "path": str(UHDR_DLL),
-        "present": UHDR_DLL.exists(),
+        "path": str(found or candidates[0]),
+        "present": found is not None,
         "source": "bundled",
+        "candidates": [str(path) for path in candidates],
         "env": {key: bool(path) for key, path in env_paths.items()},
     }
 

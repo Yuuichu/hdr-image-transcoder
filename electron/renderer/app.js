@@ -124,6 +124,7 @@ const I18N = {
       ready: "就绪",
       running: "转换中",
       done: "完成",
+      canceled: "已取消",
       error: "错误",
     },
     badges: {
@@ -397,6 +398,7 @@ const I18N = {
       ready: "ready",
       running: "running",
       done: "done",
+      canceled: "canceled",
       error: "error",
     },
     badges: {
@@ -566,7 +568,6 @@ const state = {
   runtimeOk: true,
   runtimeInfo: null,
   uhdrAvailable: false,
-  inspectRequestId: 0,
   outputReports: [],
   statusLabel: "Idle",
   statusClassName: "idle",
@@ -713,11 +714,12 @@ function setLanguage(language, rerender = true) {
   renderInspector();
   renderOutputReports();
   renderLog();
+  const runtimeState = state.runtimeInfo ? renderRuntimeBanner(state.runtimeInfo) : null;
   updateFormatState();
   setPathDisplay(elements.outputPath, state.outputDir, t("ui.defaultOutputLocation"));
   elements.logToggleButton.textContent = elements.logDrawer.classList.contains("collapsed") ? t("ui.expand") : t("ui.collapse");
-  if (state.runtimeInfo) {
-    renderRuntimeStatus(state.runtimeInfo, { quiet: true });
+  if (runtimeState && !runtimeState.ok && state.statusLabel === "Runtime Error") {
+    setSummary(t("messages.runtimeSelfCheckFailed", { issue: runtimeState.issue }));
   }
 }
 
@@ -952,7 +954,6 @@ async function loadImageInfo(filePaths) {
     return;
   }
 
-  const requestId = ++state.inspectRequestId;
   state.queueItems = state.queueItems.map((item) => (
     filePaths.includes(item.path) && !item.info ? { ...item, status: "inspecting" } : item
   ));
@@ -961,19 +962,16 @@ async function loadImageInfo(filePaths) {
 
   try {
     const result = await window.hdrTranscoder.inspectImages(filePaths);
-    if (requestId !== state.inspectRequestId) {
-      return;
-    }
     mergeImageInfos(result);
   } catch (error) {
-    if (requestId !== state.inspectRequestId) {
-      return;
-    }
-    setImageInfoMessage(error && error.message ? error.message : String(error), "error");
     state.queueItems = state.queueItems.map((item) => (
       filePaths.includes(item.path) ? { ...item, status: "error" } : item
     ));
     renderQueue();
+    const selected = selectedQueueItem();
+    if (selected && filePaths.includes(selected.path)) {
+      setImageInfoMessage(error && error.message ? error.message : String(error), "error");
+    }
   }
 }
 
@@ -1124,7 +1122,7 @@ function updateUhdrAvailability(result) {
   state.uhdrAvailable = !!(optional && optional.present);
 }
 
-function renderRuntimeStatus(result, options = {}) {
+function renderRuntimeBanner(result) {
   state.runtimeInfo = result || null;
   state.runtimeOk = !!(result && result.ok);
   updateUhdrAvailability(result);
@@ -1133,17 +1131,28 @@ function renderRuntimeStatus(result, options = {}) {
     const uhdrText = state.uhdrAvailable ? t("messages.uhdrAvailable") : t("messages.uhdrMissing");
     elements.runtimeStatus.textContent = t("messages.runtimeReady", { version, uhdrText });
     elements.runtimeStatus.className = "runtime-status ok";
-    if (!state.running) {
+    return { ok: true };
+  }
+
+  const issue = formatRuntimeIssue(result || {});
+  elements.runtimeStatus.textContent = t("messages.runtimeError", { issue });
+  elements.runtimeStatus.className = "runtime-status error";
+  return { ok: false, issue };
+}
+
+function renderRuntimeStatus(result, options = {}) {
+  const runtimeState = renderRuntimeBanner(result);
+  if (runtimeState.ok) {
+    if (!state.running && ["Unavailable", "Runtime Error"].includes(state.statusLabel)) {
       setStatus("Idle", "idle");
+    } else {
+      renderStatusBadge();
     }
   } else {
-    const issue = formatRuntimeIssue(result || {});
-    elements.runtimeStatus.textContent = t("messages.runtimeError", { issue });
-    elements.runtimeStatus.className = "runtime-status error";
     setStatus("Runtime Error", "error");
-    setSummary(t("messages.runtimeSelfCheckFailed", { issue }));
+    setSummary(t("messages.runtimeSelfCheckFailed", { issue: runtimeState.issue }));
     if (!options.quiet) {
-      appendLog(`${t("messages.runtimeSelfCheckFailed", { issue })}\n`, "stderr");
+      appendLog(`${t("messages.runtimeSelfCheckFailed", { issue: runtimeState.issue })}\n`, "stderr");
     }
   }
   updateBusyState(state.running);
@@ -1186,10 +1195,10 @@ function getOptions() {
     verifyFidelity: elements.verifyFidelityInput.checked,
     debugOverlay: elements.debugOverlayInput.checked,
     infoJson: elements.infoJsonInput.checked,
-    bt2020PqTiff: elements.bt2020PqTiffInput.checked,
-    uhdrBackend: elements.uhdrBackendSelect.value,
-    uhdrGainmapScale: Math.trunc(getNumberValue(elements.uhdrGainmapScaleInput, 2)),
-    uhdrTargetPeakNits: getNumberValue(elements.uhdrTargetPeakInput, 1000),
+    bt2020PqTiff: elements.formatSelect.value === "ultrahdr" && elements.bt2020PqTiffInput.checked,
+    uhdrBackend: elements.formatSelect.value === "ultrahdr" ? elements.uhdrBackendSelect.value : "auto",
+    uhdrGainmapScale: elements.formatSelect.value === "ultrahdr" ? Math.trunc(getNumberValue(elements.uhdrGainmapScaleInput, 2)) : 2,
+    uhdrTargetPeakNits: elements.formatSelect.value === "ultrahdr" ? getNumberValue(elements.uhdrTargetPeakInput, 1000) : 1000,
     namePrefix: elements.namePrefixInput.value,
     nameSuffix: elements.nameSuffixInput.value,
     nameFind: elements.nameFindInput.value,
@@ -1214,16 +1223,16 @@ function validateOptions(options) {
   if (options.speed < 0 || options.speed > 10) {
     return t("messages.speedRange");
   }
-  if (options.headroom <= 0) {
+  if (["gainmap", "ultrahdr"].includes(options.format) && options.headroom <= 0) {
     return t("messages.headroomPositive");
   }
-  if (options.uhdrGainmapScale < 1 || options.uhdrGainmapScale > 128) {
+  if (options.format === "ultrahdr" && (options.uhdrGainmapScale < 1 || options.uhdrGainmapScale > 128)) {
     return t("messages.gainmapScaleRange");
   }
-  if (options.uhdrTargetPeakNits < 203 || options.uhdrTargetPeakNits > 10000) {
+  if (options.format === "ultrahdr" && (options.uhdrTargetPeakNits < 203 || options.uhdrTargetPeakNits > 10000)) {
     return t("messages.targetPeakRange");
   }
-  if (!["auto", "imagecodecs", "libultrahdr"].includes(options.uhdrBackend)) {
+  if (options.format === "ultrahdr" && !["auto", "imagecodecs", "libultrahdr"].includes(options.uhdrBackend)) {
     return t("messages.unknownUhdrBackend");
   }
   if (!["rec2020-pq", "linear-srgb"].includes(options.jxlMode)) {
@@ -1232,7 +1241,7 @@ function validateOptions(options) {
   if (!["master", "display", "compat"].includes(options.fidelity)) {
     return t("messages.unknownFidelity");
   }
-  if (!["source-peak", "auto"].includes(options.gainmapHeadroomMode)) {
+  if (options.format === "gainmap" && !["source-peak", "auto"].includes(options.gainmapHeadroomMode)) {
     return t("messages.unknownGainmapHeadroom");
   }
   if (options.nameStart < 0) {
@@ -1290,10 +1299,6 @@ function updateFormatState() {
   elements.uhdrTargetPeakInput.disabled = !isUltraHdr || state.running;
   elements.bt2020PqTiffInput.disabled = !isUltraHdr || state.running;
   elements.headroomSdrInput.disabled = !(isGainmap || isUltraHdr) || state.running;
-
-  if (!isJxl) {
-    elements.losslessInput.checked = false;
-  }
 
   const fidelity = getFidelityMode();
   elements.fidelityBadge.textContent =
@@ -1409,6 +1414,14 @@ function setQueueFinished(ok) {
   renderQueue();
 }
 
+function setQueueCanceled() {
+  state.queueItems = state.queueItems.map((item) => ({
+    ...item,
+    status: item.status === "done" ? "done" : "canceled",
+  }));
+  renderQueue();
+}
+
 async function startConversion(event) {
   event.preventDefault();
 
@@ -1485,6 +1498,7 @@ function handleConversionDone(result) {
       loadOutputReports(result.outputPaths || []);
     }
   } else if (result.canceled) {
+    setQueueCanceled();
     setStatus("Canceled", "idle");
     setSummary(t("messages.conversionCanceled"));
   } else {

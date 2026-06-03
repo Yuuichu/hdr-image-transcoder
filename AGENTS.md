@@ -17,7 +17,7 @@ Electron GUI in `electron/`. README and CLAUDE.md have detailed usage docs.
 - **Flat `src/` modules are thin shims.** `src/cli.py`, `src/decoder.py`, etc.
   re-export from `hdr_transcoder.*`. Add new code to `src/hdr_transcoder/` only.
 - **JXL encoding MUST go through bundled `cjxl.exe`.** Never add an
-  `imagecodecs.jpegxl_encode` fallback — it produces misleading HDR metadata.
+  `imagecodecs.jpegxl_encode` fallback; it produces misleading HDR metadata.
 - **Default `.avif` output is gainmap AVIF, not standard AVIF.** Use
   `--format avif` for standard 10-bit PQ HDR AVIF.
 - **Master fidelity requires `--jxl-mode linear-srgb`** (lossless linear JXL).
@@ -39,7 +39,7 @@ pip install -r requirements.txt
 npm install
 
 # Syntax check
-python -m compileall src hdr_transcoder hdr2avif.py jxr2avif.py
+python -m compileall src hdr2avif.py jxr2avif.py
 node --check electron\main.js electron\preload.js electron\renderer\app.js
 
 # Tests (fidelity tests are skipped by default)
@@ -65,7 +65,7 @@ python scripts\format_matrix_validation.py --run-id local-smoke --width 64 --hei
   everything, `-m fidelity` for slow encode/decode round-trips.
 - Tools tests (`-m tools`) require bundled `.exe` files under `tools/`.
 - GUI tests (`-m gui`) use Playwright against the Electron renderer.
-  `page.evaluate()` state is lost on `location.reload()` or navigation —
+  `page.evaluate()` state is lost on `location.reload()` or navigation;
   re-inject mocks after every navigation. Forms with `<button type="submit">`
   need `event.preventDefault()` or they trigger a GET navigation.
   `browser_select_option` requires the `values` parameter (array of strings).

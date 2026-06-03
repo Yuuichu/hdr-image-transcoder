@@ -41,3 +41,18 @@ def test_optional_uhdr_status_honors_env_path(tmp_path, monkeypatch):
     assert result["present"] is True
     assert result["path"] == str(dll)
     assert result["source"] == "HDR_TRANSCODER_UHDR_DLL"
+
+
+@pytest.mark.quick
+def test_optional_uhdr_status_uses_loader_candidates(tmp_path, monkeypatch):
+    dll = tmp_path / "libuhdr.dll"
+    dll.write_bytes(b"test")
+    monkeypatch.delenv("HDR_TRANSCODER_UHDR_DLL", raising=False)
+    monkeypatch.delenv("UHDR_DLL", raising=False)
+    monkeypatch.setattr("hdr_transcoder.tools.candidate_uhdr_dll_paths", lambda: [dll])
+
+    result = optional_uhdr_status()
+
+    assert result["present"] is True
+    assert result["path"] == str(dll)
+    assert result["source"] == "bundled"

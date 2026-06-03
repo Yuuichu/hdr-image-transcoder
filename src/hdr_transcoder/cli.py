@@ -5,6 +5,7 @@ Entry point for the hdr2avif command-line interface.
 """
 import sys
 import re
+import math
 from pathlib import Path
 
 import numpy as np
@@ -395,9 +396,9 @@ def _validate_args(parser, args):
         parser.error("--quality must be between 0 and 100")
     if not 0 <= args.speed <= 10:
         parser.error("--speed must be between 0 and 10")
-    if args.max_headroom is not None and args.max_headroom < 0:
+    if args.max_headroom is not None and (not math.isfinite(args.max_headroom) or args.max_headroom < 0):
         parser.error("--max-headroom must be >= 0")
-    if args.headroom <= 0:
+    if not math.isfinite(args.headroom) or args.headroom <= 0:
         parser.error("--headroom must be > 0")
     if args.fidelity not in FIDELITIES:
         parser.error(f"--fidelity must be one of: {', '.join(sorted(FIDELITIES))}")
@@ -417,9 +418,13 @@ def _validate_args(parser, args):
         parser.error(f"--uhdr-profile must be one of: {', '.join(sorted(ULTRAHDR_PROFILES))}")
     if args.uhdr_gainmap_scale < 1 or args.uhdr_gainmap_scale > 128:
         parser.error("--gainmap-scale must be between 1 and 128")
-    if args.uhdr_gainmap_gamma <= 0:
+    if not math.isfinite(args.uhdr_gainmap_gamma) or args.uhdr_gainmap_gamma <= 0:
         parser.error("--gainmap-gamma must be > 0")
-    if args.uhdr_target_peak_nits < 203 or args.uhdr_target_peak_nits > 10000:
+    if (
+        not math.isfinite(args.uhdr_target_peak_nits)
+        or args.uhdr_target_peak_nits < 203
+        or args.uhdr_target_peak_nits > 10000
+    ):
         parser.error("--target-peak-nits must be between 203 and 10000")
     if args.name_start < 0:
         parser.error("--name-start must be >= 0")

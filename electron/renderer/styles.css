@@ -383,6 +383,12 @@ label {
   background: #fff0ee;
 }
 
+.queue-status.canceled {
+  color: var(--muted);
+  border-color: var(--border);
+  background: var(--surface-muted);
+}
+
 .queue-status.done,
 .fidelity-badge.master {
   color: var(--success);
